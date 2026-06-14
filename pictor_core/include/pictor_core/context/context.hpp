@@ -35,6 +35,8 @@ public:
   void copy(const AllocationInfo &src, const AllocationInfo &dst,
             StreamHandle stream = cDefaultStream);
 
+  void deallocate(AllocationInfo &alloc);
+
   vk::Instance instance;
   vk::PhysicalDevice physical_device;
   vk::Device device;

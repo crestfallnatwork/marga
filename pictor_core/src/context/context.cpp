@@ -79,6 +79,8 @@ void Context::copy(const AllocationInfo &src, const AllocationInfo &dst,
   }
 }
 
+void Context::deallocate(AllocationInfo &info) { info.alloc->deallocate(info); }
+
 vk::Result Context::_init() {
   vk::Result res = _create_instance();
   if (res != vk::Result::eSuccess)

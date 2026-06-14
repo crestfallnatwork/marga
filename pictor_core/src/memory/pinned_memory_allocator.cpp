@@ -35,6 +35,7 @@ PinnedMemoryAllocator::allocate(PinnedMemoryAllocatorParams const &params) {
   bufferInfo.usage = params.bufferUsage;
 
   auto res = _ctx->vma_allocator.createBuffer(bufferInfo, localAllocInfo);
+  result.alloc = this;
   result.res = res.result;
   result.buffer = res.value.second;
   result.allocation = res.value.first;
@@ -42,7 +43,7 @@ PinnedMemoryAllocator::allocate(PinnedMemoryAllocatorParams const &params) {
   if (result.allocation) {
     vma::AllocationInfo vmaInfo =
         _ctx->vma_allocator.getAllocationInfo(result.allocation);
-    result.size = vmaInfo.size;
+    result.size = params.size;
     result.offset = 0;
     result.mappedPtr = vmaInfo.pMappedData;
 
@@ -53,7 +54,7 @@ PinnedMemoryAllocator::allocate(PinnedMemoryAllocatorParams const &params) {
   return result;
 }
 
-void PinnedMemoryAllocator::deallocate(AllocationInfo info) {
+void PinnedMemoryAllocator::deallocate(AllocationInfo &info) {
   _ctx->vma_allocator.destroyBuffer(info.buffer, info.allocation);
 }
 

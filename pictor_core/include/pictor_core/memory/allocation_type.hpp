@@ -12,6 +12,7 @@ enum class AllocationType : uint8_t {
   eVirtualSuballocation = 2
 };
 
+struct Allocator;
 struct AllocationInfo {
   vk::Result res;
   union {
@@ -28,10 +29,6 @@ struct AllocationInfo {
   size_t offset{0};
   AllocationType type{AllocationType::eBuffer};
 
-  mutable vk::PipelineStageFlags2 lastWritingStage{
-      vk::PipelineStageFlagBits2::eNone};
-  mutable vk::AccessFlags2 lastAccessMask{vk::AccessFlagBits2::eNone};
-
   union {
     VkDeviceAddress address{0};
     struct {
@@ -39,5 +36,7 @@ struct AllocationInfo {
       VkImageLayout layout;
     } img;
   };
+  
+  Allocator *alloc;
 };
 } // namespace pictor
