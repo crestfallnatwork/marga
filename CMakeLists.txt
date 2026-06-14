@@ -19,13 +19,24 @@ FetchContent_Declare(
     GIT_TAG        1.4.350
 )
 
-FetchContent_MakeAvailable(vmahpp volk)
+FetchContent_Declare(
+  slang
+  URL https://github.com/shader-slang/slang/releases/download/v2026.10.2/slang-2026.10.2-linux-x86_64-glibc-2.27.tar.gz
+  URL_HASH SHA256=035aaeaaadd6024d64da28d665685f793d0928831bf32cb2c37cb3e58c5ac707
+)
+
+FetchContent_MakeAvailable(vmahpp volk slang)
+list(APPEND CMAKE_PREFIX_PATH "${slang_SOURCE_DIR}")
+
+find_package(slang REQUIRED CONFIG)
 
 include_directories(include)
+
 
 add_library(pictor_core
     src/context/context.cpp
     src/execution/stream.cpp
+    src/execution/shader_compiler.cpp
     src/memory/pool_allocator.cpp
     src/memory/pinned_memory_allocator.cpp
 )
@@ -39,6 +50,7 @@ target_link_libraries(pictor_core
     PUBLIC 
         volk
         VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp
+        slang::slang 
 )
 
 target_link_libraries(test 

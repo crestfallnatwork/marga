@@ -1,10 +1,31 @@
 #include "pictor_core/context/context.hpp"
 #include "pictor_core/execution/mesh_executor.hpp"
 #include "pictor_core/execution/compute_executor.hpp"
+#include "pictor_core/execution/shader_compiler.hpp"
 #include <iostream>
 #include <vector>
 #include <iomanip>
 #include <cstring>
+
+const char* slangSource = R"(
+    struct AddConstants {
+        uint64_t a_addr;
+        uint64_t b_addr;
+        uint64_t c_addr;
+        uint count;
+    };
+
+    [shader("compute")]
+    [numthreads(64, 1, 1)]
+    void main(uint3 threadId : SV_DispatchThreadID, uniform AddConstants pc) {
+        if (threadId.x < pc.count) {
+            float* a = (float*)pc.a_addr;
+            float* b = (float*)pc.b_addr;
+            float* c = (float*)pc.c_addr;
+            c[threadId.x] = a[threadId.x] + b[threadId.x];
+        }
+    }
+)";
 
 struct AddConstants {
     uint64_t a_addr;
@@ -29,6 +50,21 @@ int main() {
 
     auto& ctx = *std::get<std::unique_ptr<pictor::Context>>(ctxRes);
     std::cout << "Vulkan Context created successfully." << std::endl;
+
+    // --- Slang JIT Test ---
+    std::cout << "Testing Slang JIT..." << std::endl;
+    auto compilerRes = pictor::ShaderCompiler::create();
+    if (std::holds_alternative<vk::Result>(compilerRes)) {
+        std::cerr << "Failed to create compiler." << std::endl;
+        return 1;
+    }
+    auto& compiler = *std::get<std::unique_ptr<pictor::ShaderCompiler>>(compilerRes);
+    auto compileResult = compiler.compile(slangSource, "main", pictor::ShaderStage::Compute);
+    if (!compileResult.success) {
+        std::cerr << "Slang Compilation Failed: " << compileResult.diagnostics << std::endl;
+        return 1;
+    }
+    std::cout << "Slang JIT Compilation SUCCESS!" << std::endl;
 
     // --- Create Executors ---
     auto addRes = pictor::ComputeExecutor<AddConstants>::create(ctx, "../test/shaders/add.comp.spv");
