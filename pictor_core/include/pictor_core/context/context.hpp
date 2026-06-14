@@ -1,0 +1,64 @@
+#pragma once
+
+#include "pictor_core/context/result_type.hpp"
+#include "pictor_core/execution/stream.hpp"
+#include "pictor_core/memory/allocation_type.hpp"
+#include "pictor_core/memory/pinned_memory_allocator.hpp"
+#include "pictor_core/memory/pool_allocator.hpp"
+
+#include <vulkan/vulkan.hpp>
+
+#include <vk_mem_alloc.hpp>
+
+#include <memory>
+
+namespace pictor {
+
+class Context {
+public:
+  static Expected<std::unique_ptr<Context>, vk::Result> create();
+
+  ~Context();
+
+  Context(const Context &) = delete;
+  Context &operator=(const Context &) = delete;
+
+  StreamHandle create_stream();
+  void flush(StreamHandle handle = cDefaultStream);
+  Stream *get_stream(StreamHandle handle);
+
+  void wait_idle() const { (void)device.waitIdle(); }
+  void sync(StreamHandle handle = cDefaultStream);
+  void barrier(const AllocationInfo &resource, Access from, Access to,
+               StreamHandle handle = cDefaultStream);
+
+  void copy(const AllocationInfo &src, const AllocationInfo &dst,
+            StreamHandle stream = cDefaultStream);
+
+  vk::Instance instance;
+  vk::PhysicalDevice physical_device;
+  vk::Device device;
+
+  vk::Queue queue;
+  uint32_t queue_family_index{0};
+
+  vma::Allocator vma_allocator;
+
+  std::unique_ptr<PinnedMemoryAllocator> pinned_allocator;
+  std::unique_ptr<PoolAllocator> pool_allocator;
+
+private:
+  Context() = default;
+
+  vk::Result _init();
+  vk::Result _create_instance();
+  vk::Result _select_physical_device();
+  vk::Result _create_logical_device();
+  vk::Result _setup_vma();
+  vk::Result _setup_allocators();
+  vk::Result _setup_streams();
+
+  std::vector<std::unique_ptr<Stream>> _streams;
+};
+
+} // namespace pictor
