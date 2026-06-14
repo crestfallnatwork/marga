@@ -52,13 +52,14 @@ AllocationInfo PoolAllocator::allocate(PoolAllocatorParams const &params) {
   bufferInfo.usage = params.bufferUsage;
 
   auto res = _ctx->vma_allocator.createBuffer(bufferInfo, localAllocInfo);
+  result.alloc = this;
   result.res = res.result;
   result.buffer = res.value.second;
   result.allocation = res.value.first;
 
   if (result.allocation) {
     vma::AllocationInfo vmaInfo = _ctx->vma_allocator.getAllocationInfo(result.allocation);
-    result.size = vmaInfo.size;
+    result.size = params.size;
     result.offset = 0;
     result.mappedPtr = vmaInfo.pMappedData;
 
@@ -69,7 +70,7 @@ AllocationInfo PoolAllocator::allocate(PoolAllocatorParams const &params) {
   return result;
 }
 
-void PoolAllocator::deallocate(AllocationInfo info) {
+void PoolAllocator::deallocate(AllocationInfo &info) {
   _ctx->vma_allocator.destroyBuffer(info.buffer, info.allocation);
 }
 
