@@ -43,22 +43,22 @@ struct MulConstants {
 
 int main() {
     auto ctxRes = pictor::Context::create();
-    if (std::holds_alternative<vk::Result>(ctxRes)) {
-        std::cerr << "Failed to create context: " << vk::to_string(std::get<vk::Result>(ctxRes)) << std::endl;
+    if (!ctxRes.ok()) {
+        std::cerr << "Failed to create context: " << vk::to_string(ctxRes.err()) << std::endl;
         return 1;
     }
 
-    auto& ctx = *std::get<std::unique_ptr<pictor::Context>>(ctxRes);
+    auto& ctx = *ctxRes.val();
     std::cout << "Vulkan Context created successfully." << std::endl;
 
     // --- Slang JIT Test ---
     std::cout << "Testing Slang JIT..." << std::endl;
     auto compilerRes = pictor::ShaderCompiler::create();
-    if (std::holds_alternative<vk::Result>(compilerRes)) {
+    if (!compilerRes.ok()) {
         std::cerr << "Failed to create compiler." << std::endl;
         return 1;
     }
-    auto& compiler = *std::get<std::unique_ptr<pictor::ShaderCompiler>>(compilerRes);
+    auto& compiler = *compilerRes.val();
     auto compileResult = compiler.compile(slangSource, "main", pictor::ShaderStage::Compute);
     if (!compileResult.success) {
         std::cerr << "Slang Compilation Failed: " << compileResult.diagnostics << std::endl;
@@ -70,12 +70,12 @@ int main() {
     auto addRes = pictor::ComputeExecutor<AddConstants>::create(ctx, "../test/shaders/add.comp.spv");
     auto mulRes = pictor::MeshExecutor<MulConstants>::create(ctx, "../test/shaders/mul.task.spv", "../test/shaders/mul.mesh.spv");
 
-    if (std::holds_alternative<vk::Result>(addRes) || std::holds_alternative<vk::Result>(mulRes)) {
+    if (!addRes.ok() || !mulRes.ok()) {
         std::cerr << "Failed to create executors." << std::endl;
         return 1;
     }
-    auto& addExec = *std::get<std::unique_ptr<pictor::ComputeExecutor<AddConstants>>>(addRes);
-    auto& mulExec = *std::get<std::unique_ptr<pictor::MeshExecutor<MulConstants>>>(mulRes);
+    auto& addExec = *addRes.val();
+    auto& mulExec = *mulRes.val();
 
     const uint32_t count = 1024;
     const size_t size = count * sizeof(float);

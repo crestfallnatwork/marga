@@ -1,12 +1,13 @@
 #define VMA_IMPLEMENTATION
-#include "volk.h"
+#include <volk.h>
+
 #include "pictor_core/context/context.hpp"
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace pictor {
 
-std::variant<std::unique_ptr<Context>, vk::Result> Context::create() {
+Expected<std::unique_ptr<Context>, vk::Result> Context::create() {
   if (volkInitialize() != VK_SUCCESS) {
     return vk::Result::eErrorInitializationFailed;
   }

@@ -1,13 +1,15 @@
 #pragma once
 
 #include "pictor_core/context/context.hpp"
+#include "pictor_core/context/result_type.hpp"
+
+#include <vulkan/vulkan.hpp>
+
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
-#include <variant>
 #include <vector>
-#include <vulkan/vulkan.hpp>
 
 namespace pictor {
 
@@ -18,7 +20,7 @@ public:
   vk::Pipeline pipeline;
   vk::PipelineLayout layout;
 
-  static std::variant<std::unique_ptr<MeshExecutor<T>>, vk::Result>
+  static Expected<std::unique_ptr<MeshExecutor<T>>, vk::Result>
   create(Context &ctx, const std::string &taskShaderPath,
          const std::string &meshShaderPath) {
 

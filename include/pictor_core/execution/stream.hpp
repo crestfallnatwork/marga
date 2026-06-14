@@ -2,8 +2,10 @@
 
 #include "pictor_core/execution/synchronization.hpp"
 #include "pictor_core/memory/allocation_type.hpp"
-#include <array>
+
 #include <vulkan/vulkan.hpp>
+
+#include <array>
 
 namespace pictor {
 
@@ -26,10 +28,8 @@ public:
   vk::Result end();
   vk::Result flush(vk::Queue queue);
 
-  // Wait for all work in this stream to finish
   void synchronize();
 
-  // Resource-centric barrier
   void barrier(const AllocationInfo &resource, Access from, Access to);
 
   void record(RecordCallback cb, void *user_data);
@@ -37,7 +37,6 @@ public:
   vk::Device device;
   vk::CommandPool command_pool;
 
-  // The buffer currently being recorded (if any)
   vk::CommandBuffer current_command_buffer() const {
     return _command_buffers[_current_frame];
   }

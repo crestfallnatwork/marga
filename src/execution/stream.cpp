@@ -1,4 +1,5 @@
 #include "pictor_core/execution/stream.hpp"
+
 #include <algorithm>
 
 namespace pictor {

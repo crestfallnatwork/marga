@@ -28,7 +28,7 @@ ShaderCompiler::ShaderCompiler() : _impl(std::make_unique<Impl>()) {}
 
 ShaderCompiler::~ShaderCompiler() {}
 
-std::variant<std::unique_ptr<ShaderCompiler>, vk::Result>
+Expected<std::unique_ptr<ShaderCompiler>, vk::Result>
 ShaderCompiler::create() {
   auto compiler = std::unique_ptr<ShaderCompiler>(new ShaderCompiler());
 

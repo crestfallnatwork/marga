@@ -30,9 +30,6 @@ list(APPEND CMAKE_PREFIX_PATH "${slang_SOURCE_DIR}")
 
 find_package(slang REQUIRED CONFIG)
 
-include_directories(include)
-
-
 add_library(pictor_core
     src/context/context.cpp
     src/execution/stream.cpp
@@ -41,10 +38,18 @@ add_library(pictor_core
     src/memory/pinned_memory_allocator.cpp
 )
 
-add_executable(test src/test.cpp)
+target_include_directories(pictor_core
+    PUBLIC 
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
 
-add_compile_definitions(VULKAN_HPP_NO_EXCEPTIONS)
-add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
+target_compile_definitions(pictor_core 
+    PUBLIC 
+        VULKAN_HPP_NO_EXCEPTIONS
+        VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
+        VK_NO_PROTOTYPES
+)
 
 target_link_libraries(pictor_core 
     PUBLIC 
@@ -53,7 +58,11 @@ target_link_libraries(pictor_core
         slang::slang 
 )
 
-target_link_libraries(test 
-    PRIVATE 
-        pictor_core
-)
+# Only build tests if this is the top-level project
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+    add_executable(test src/test.cpp)
+    target_link_libraries(test 
+        PRIVATE 
+            pictor_core
+    )
+endif()

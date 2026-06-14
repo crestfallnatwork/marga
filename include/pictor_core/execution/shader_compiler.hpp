@@ -1,10 +1,12 @@
 #pragma once
 
+#include "pictor_core/context/result_type.hpp"
+
+#include <vulkan/vulkan.hpp>
+
 #include <memory>
 #include <string>
-#include <variant>
 #include <vector>
-#include <vulkan/vulkan.hpp>
 
 namespace pictor {
 
@@ -18,11 +20,11 @@ struct CompileResult {
 
 class ShaderCompiler {
 public:
-  static std::variant<std::unique_ptr<ShaderCompiler>, vk::Result> create();
+  static Expected<std::unique_ptr<ShaderCompiler>, vk::Result> create();
   ~ShaderCompiler();
 
-  CompileResult compile(const std::string &source, const std::string &entryPoint,
-                        ShaderStage stage);
+  CompileResult compile(const std::string &source,
+                        const std::string &entryPoint, ShaderStage stage);
 
 private:
   ShaderCompiler();

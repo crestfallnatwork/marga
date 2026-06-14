@@ -1,22 +1,22 @@
 #pragma once
 
+#include "pictor_core/context/result_type.hpp"
 #include "pictor_core/execution/stream.hpp"
 #include "pictor_core/memory/allocation_type.hpp"
 #include "pictor_core/memory/pinned_memory_allocator.hpp"
 #include "pictor_core/memory/pool_allocator.hpp"
 
 #include <vulkan/vulkan.hpp>
+
 #include <vk_mem_alloc.hpp>
 
 #include <memory>
-#include <variant>
-#include <vector>
 
 namespace pictor {
 
 class Context {
 public:
-  static std::variant<std::unique_ptr<Context>, vk::Result> create();
+  static Expected<std::unique_ptr<Context>, vk::Result> create();
 
   ~Context();
 
