@@ -4,6 +4,8 @@
 
 namespace pictor {
 
+struct AllocationInfo;
+
 enum class Access { Read, Write, IndirectRead, TransferRead, TransferWrite };
 
 struct AccessInfo {
@@ -35,5 +37,11 @@ inline AccessInfo get_vulkan_access_info(Access access) {
   }
   return {vk::PipelineStageFlagBits2::eNone, vk::AccessFlagBits2::eNone};
 }
+
+struct ResourceBarrier {
+  const AllocationInfo* resource;
+  Access from;
+  Access to;
+};
 
 } // namespace pictor
