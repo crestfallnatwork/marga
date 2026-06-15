@@ -76,9 +76,5 @@ add_slang_shader(bfs.slang)
 add_library(pictor_graphs src/csr.cpp src/bfs.cpp src/bfs_validation.cpp ${GENERATED_SHADERS})
 target_link_libraries(pictor_graphs pictor_core OpenMP::OpenMP_CXX)
 
-
-add_executable(test test.cpp)
-target_link_libraries(test pictor_graphs pictor_core)
-
 add_executable(bfs src/bfs_main.cpp)
 target_link_libraries(bfs pictor_graphs pictor_core)
