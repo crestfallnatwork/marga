@@ -117,7 +117,7 @@ void Graph::load_from_binary(const std::string &prefix) {
   throw std::string{"not implemented"};
 }
 
-Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize) {
+Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize, GraphLayout target_layout) {
   MappedFile mf(file);
   const char *start = static_cast<const char *>(mf.data);
   const char *end = start + mf.size;
@@ -129,6 +129,7 @@ Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize) {
 
   Graph g(&ctx);
   g.num_vertices = num_vertices;
+  g.layout = target_layout;
 
   std::vector<std::atomic<uint64_t>> degrees(num_vertices + 1);
   for (auto &d : degrees)
@@ -152,11 +153,20 @@ Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize) {
         break;
       ptr = next_line(res.ptr, c_end);
 
-      if (u > 0 && u <= num_vertices)
-        degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
-      if (force_symmetric && u != v) {
-        if (v > 0 && v <= num_vertices)
-          degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+      if (target_layout == GraphLayout::CSC) {
+          if (v > 0 && v <= num_vertices)
+              degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+          if (force_symmetric && u != v) {
+              if (u > 0 && u <= num_vertices)
+                  degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+          }
+      } else {
+          if (u > 0 && u <= num_vertices)
+              degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+          if (force_symmetric && u != v) {
+              if (v > 0 && v <= num_vertices)
+                  degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+          }
       }
     }
   };
@@ -223,17 +233,32 @@ Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize) {
         break;
       ptr = next_line(res.ptr, c_end);
 
-      if (u > 0 && u <= num_vertices) {
-        uint64_t pos = g.row_offsets[u - 1] +
-                       degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
-        g.column_indices[pos] = (uint32_t)(v - 1);
-      }
-      if (force_symmetric && u != v) {
-        if (v > 0 && v <= num_vertices) {
-          uint64_t pos = g.row_offsets[v - 1] +
-                         degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
-          g.column_indices[pos] = (uint32_t)(u - 1);
-        }
+      if (target_layout == GraphLayout::CSC) {
+          if (v > 0 && v <= num_vertices) {
+              uint64_t pos = g.row_offsets[v - 1] +
+                             degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+              g.column_indices[pos] = (uint32_t)(u - 1);
+          }
+          if (force_symmetric && u != v) {
+              if (u > 0 && u <= num_vertices) {
+                  uint64_t pos = g.row_offsets[u - 1] +
+                                 degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                  g.column_indices[pos] = (uint32_t)(v - 1);
+              }
+          }
+      } else {
+          if (u > 0 && u <= num_vertices) {
+            uint64_t pos = g.row_offsets[u - 1] +
+                           degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+            g.column_indices[pos] = (uint32_t)(v - 1);
+          }
+          if (force_symmetric && u != v) {
+            if (v > 0 && v <= num_vertices) {
+              uint64_t pos = g.row_offsets[v - 1] +
+                             degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+              g.column_indices[pos] = (uint32_t)(u - 1);
+            }
+          }
       }
     }
   };

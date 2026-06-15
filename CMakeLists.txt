@@ -73,7 +73,7 @@ endfunction()
 
 add_slang_shader(bfs.slang "-entry;task;-entry;mesh;-entry;compute_indirect")
 add_slang_shader(out_degree.slang "-entry;calc_out_degrees")
-add_slang_shader(pagerank.slang "-entry;task;-entry;mesh;-entry;finalize_and_check;-entry;calc_dangling")
+add_slang_shader(pagerank.slang "-entry;task;-entry;mesh;-entry;reduce;-entry;finalize_and_check;-entry;calc_dangling")
 
 add_library(pictor_graphs src/csr.cpp src/bfs.cpp src/pagerank.cpp src/bfs_validation.cpp src/pagerank_validation.cpp ${GENERATED_SHADERS})
 target_link_libraries(pictor_graphs pictor_core OpenMP::OpenMP_CXX)

@@ -10,6 +10,12 @@ namespace pictor {
 struct Context;
 
 namespace graphs {
+
+enum class GraphLayout {
+    CSR, // Compressed Sparse Row (Sorted by Source, holds Destinations)
+    CSC  // Compressed Sparse Column (Sorted by Destination, holds Sources)
+};
+
 struct Graph {
   ~Graph();
   Graph(Context *ctx);
@@ -19,6 +25,7 @@ struct Graph {
 
   uint64_t num_vertices = 0;
   uint64_t num_edges = 0;
+  GraphLayout layout = GraphLayout::CSR;
 
   std::span<uint64_t> row_offsets;
   std::span<uint32_t> column_indices;
@@ -27,7 +34,7 @@ struct Graph {
   void load_from_binary(const std::string &prefix);
 
   static Graph import(Context &ctx, std::string const &file,
-                      bool symmetrize = false);
+                      bool symmetrize = false, GraphLayout target_layout = GraphLayout::CSR);
 
 private:
   AllocationInfo h_row_offsets;
