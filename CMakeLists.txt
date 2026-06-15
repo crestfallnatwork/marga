@@ -22,7 +22,7 @@ endif()
 # Find slangc from FetchContent or system
 set(SLANGC_EXECUTABLE ${CMAKE_CURRENT_BINARY_DIR}/_deps/slang-src/bin/slangc)
 
-function(add_slang_shader SHADER_FILE)
+function(add_slang_shader SHADER_FILE ENTRY_POINTS)
     get_filename_component(SHADER_NAME ${SHADER_FILE} NAME_WE)
     set(SPV_FILE ${CMAKE_CURRENT_BINARY_DIR}/generated/${SHADER_NAME}.spv)
     set(JSON_FILE ${CMAKE_CURRENT_BINARY_DIR}/generated/${SHADER_NAME}.json)
@@ -35,7 +35,7 @@ function(add_slang_shader SHADER_FILE)
         OUTPUT ${SPV_FILE} ${JSON_FILE}
         COMMAND ${SLANGC_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/${SHADER_FILE} 
                 -target spirv -profile spirv_1_5 
-                -entry task -entry mesh -entry compute_indirect
+                ${ENTRY_POINTS}
                 -o ${SPV_FILE} -reflection-json ${JSON_FILE}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/${SHADER_FILE}
         COMMENT "Compiling ${SHADER_FILE} to SPIR-V and generating reflection"
@@ -71,10 +71,15 @@ function(add_slang_shader SHADER_FILE)
     set(GENERATED_SHADERS ${GENERATED_SHADERS} ${LAYOUT_HEADER} ${HEADER_FILE} ${SOURCE_HEADER} PARENT_SCOPE)
 endfunction()
 
-add_slang_shader(bfs.slang)
+add_slang_shader(bfs.slang "-entry;task;-entry;mesh;-entry;compute_indirect")
+add_slang_shader(out_degree.slang "-entry;calc_out_degrees")
+add_slang_shader(pagerank.slang "-entry;task;-entry;mesh;-entry;finalize_and_check;-entry;calc_dangling")
 
-add_library(pictor_graphs src/csr.cpp src/bfs.cpp src/bfs_validation.cpp ${GENERATED_SHADERS})
+add_library(pictor_graphs src/csr.cpp src/bfs.cpp src/pagerank.cpp src/bfs_validation.cpp src/pagerank_validation.cpp ${GENERATED_SHADERS})
 target_link_libraries(pictor_graphs pictor_core OpenMP::OpenMP_CXX)
 
 add_executable(bfs src/bfs_main.cpp)
 target_link_libraries(bfs pictor_graphs pictor_core)
+
+add_executable(pagerank src/pagerank_main.cpp)
+target_link_libraries(pagerank pictor_graphs pictor_core)
