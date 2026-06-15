@@ -31,6 +31,7 @@ public:
   void synchronize();
 
   void barrier(const AllocationInfo &resource, Access from, Access to);
+  void barrier(const std::vector<ResourceBarrier>& barriers);
 
   void record(RecordCallback cb, void *user_data);
 
@@ -45,6 +46,8 @@ private:
   friend class Context;
 
   void _copy(const AllocationInfo &src, const AllocationInfo &dst);
+  void _fill(const AllocationInfo &dst, size_t offset, size_t size, uint32_t value);
+  void _update(const AllocationInfo &dst, size_t offset, size_t size, const void *data);
 
   std::array<vk::CommandBuffer, 2> _command_buffers;
   std::array<vk::Fence, 2> _fences;

@@ -31,9 +31,17 @@ public:
   void sync(StreamHandle handle = cDefaultStream);
   void barrier(const AllocationInfo &resource, Access from, Access to,
                StreamHandle handle = cDefaultStream);
+  void barrier(const std::vector<ResourceBarrier> &barriers,
+               StreamHandle handle = cDefaultStream);
 
   void copy(const AllocationInfo &src, const AllocationInfo &dst,
             StreamHandle stream = cDefaultStream);
+  void fill(const AllocationInfo &dst, uint32_t value,
+            StreamHandle stream = cDefaultStream);
+  void fill(const AllocationInfo &dst, size_t offset, size_t size,
+            uint32_t value, StreamHandle stream = cDefaultStream);
+  void update(const AllocationInfo &dst, size_t offset, size_t size,
+              const void *data, StreamHandle stream = cDefaultStream);
 
   void deallocate(AllocationInfo &alloc);
 
@@ -45,6 +53,7 @@ public:
   uint32_t queue_family_index{0};
 
   vma::Allocator vma_allocator;
+  uint32_t subgroup_size{32};
 
   std::unique_ptr<PinnedMemoryAllocator> pinned_allocator;
   std::unique_ptr<PoolAllocator> pool_allocator;

@@ -1,2 +1,45 @@
+# Ignore vim undo file
+*.un~
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+
+# Build directories
+build*/
+build_*/
+*_build/
+.cmake/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+!cmake/*.cmake
+
+# Test/benchmark results
+*.csv
+*.db
+*.stats.csv
+*.sysinfo.txt
+results/
+
+# Exclude datasets and externals
+datasets/
+externals/
+
+# clangd cache
 .cache
-build
+temp

@@ -1,0 +1,57 @@
+#pragma once
+
+#include "csr.hpp"
+#include "bfs.layout.hpp"
+#include "pictor_core/execution/mesh_executor.hpp"
+#include "pictor_core/execution/compute_executor.hpp"
+#include <cstdint>
+#include <vector>
+#include <memory>
+#include <span>
+
+namespace pictor {
+struct Context;
+
+namespace graphs {
+
+
+struct BFSTimings {
+    double alloc_ms = 0;
+    double init_ms = 0;
+    double traversal_ms = 0;
+    double inner_sync_ms = 0;
+    double pci_readback_ms = 0;
+    double total_ms = 0;
+};
+
+class BFS {
+public:
+    BFS(Context& ctx);
+    ~BFS();
+
+    // Returns a span to host-pinned distances and detailed timing information.
+    std::pair<std::span<uint32_t>, BFSTimings> run(Graph& g, uint32_t src_vertex);
+
+private:
+    Context& _ctx;
+    
+    std::unique_ptr<MeshExecutor<bfs_json_layout::Params>> _mesh_exec;
+    std::unique_ptr<ComputeExecutor<bfs_json_layout::Params>> _indirect_exec;
+    
+    AllocationInfo _frontier_a;
+    AllocationInfo _frontier_b;
+    AllocationInfo _frontier_size_a;
+    AllocationInfo _frontier_size_b;
+    
+    AllocationInfo _visited;
+    AllocationInfo _distances;
+    AllocationInfo _h_distances;
+    AllocationInfo _indirect_buffer;
+    AllocationInfo _staging_size;
+
+    void _allocate_buffers(uint64_t num_vertices, uint64_t num_edges);
+    void _cleanup_buffers();
+};
+
+} // namespace graphs
+} // namespace pictor

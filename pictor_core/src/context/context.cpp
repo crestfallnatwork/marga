@@ -71,11 +71,40 @@ void Context::barrier(const AllocationInfo &resource, Access from, Access to,
   }
 }
 
+void Context::barrier(const std::vector<ResourceBarrier> &barriers,
+                      StreamHandle handle) {
+  Stream *s = get_stream(handle);
+  if (s) {
+    s->barrier(barriers);
+  }
+}
+
 void Context::copy(const AllocationInfo &src, const AllocationInfo &dst,
                    StreamHandle handle) {
   Stream *s = get_stream(handle);
   if (s) {
     s->_copy(src, dst);
+  }
+}
+
+void Context::fill(const AllocationInfo &dst, uint32_t value,
+                   StreamHandle handle) {
+  return fill(dst, dst.offset, dst.size, value);
+}
+
+void Context::fill(const AllocationInfo &dst, size_t offset, size_t size,
+                   uint32_t value, StreamHandle handle) {
+  Stream *s = get_stream(handle);
+  if (s) {
+    s->_fill(dst, offset, size, value);
+  }
+}
+
+void Context::update(const AllocationInfo &dst, size_t offset, size_t size,
+                     const void *data, StreamHandle handle) {
+  Stream *s = get_stream(handle);
+  if (s) {
+    s->_update(dst, offset, size, data);
   }
 }
 
@@ -114,7 +143,7 @@ vk::Result Context::_create_instance() {
   appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
   appInfo.apiVersion = VK_API_VERSION_1_3;
 
-  std::vector<const char *> layers = {"VK_LAYER_KHRONOS_validation"};
+  std::vector<const char *> layers = {};
 
   vk::InstanceCreateInfo createInfo{};
   createInfo.pApplicationInfo = &appInfo;
@@ -217,7 +246,8 @@ vk::Result Context::_create_logical_device() {
   queueCreateInfo.pQueuePriorities = &queuePriority;
 
   std::vector<const char *> deviceExtensions = {
-      VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_MAINTENANCE_4_EXTENSION_NAME};
+      VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
+      VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
 
   vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures;
   meshFeatures.meshShader = VK_TRUE;
@@ -242,6 +272,12 @@ vk::Result Context::_create_logical_device() {
   vk::PhysicalDeviceFeatures2 deviceFeatures2;
   deviceFeatures2.features.shaderInt64 = VK_TRUE;
   deviceFeatures2.pNext = &dynamicRendering;
+
+  vk::PhysicalDeviceSubgroupProperties subgroupProps;
+  vk::PhysicalDeviceProperties2 devProps2;
+  devProps2.pNext = &subgroupProps;
+  physical_device.getProperties2(&devProps2);
+  subgroup_size = subgroupProps.subgroupSize;
 
   vk::DeviceCreateInfo createInfo{};
   createInfo.queueCreateInfoCount = 1;

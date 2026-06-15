@@ -1,50 +1,32 @@
 #pragma once
 
-#include "pictor_core/context/context.hpp"
-#include "pictor_core/context/result_type.hpp"
-
-#include <vulkan/vulkan.hpp>
-
-#include <fstream>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <vector>
+#include "base_executor.hpp"
 
 namespace pictor {
 
-template <typename T> class ComputeExecutor {
+template <typename TParams, typename TResources = void>
+class ComputeExecutor : public BaseExecutor<TParams, TResources> {
 public:
-  using PushConstantType = T;
+  static Expected<std::unique_ptr<ComputeExecutor<TParams, TResources>>,
+                  vk::Result>
+  create_from_spirv(Context &ctx, const std::vector<uint32_t> &computeShader,
+                    const std::string &entry = "main",
+                    const vk::SpecializationInfo *specInfo = nullptr) {
 
-  vk::Pipeline pipeline;
-  vk::PipelineLayout layout;
+    auto executor = std::unique_ptr<ComputeExecutor<TParams, TResources>>(
+        new ComputeExecutor<TParams, TResources>());
+    executor->ctx = &ctx;
 
-  static Expected<std::unique_ptr<ComputeExecutor<T>>, vk::Result>
-  create(Context &ctx, const std::string &computeShaderPath) {
-
-    auto executor =
-        std::unique_ptr<ComputeExecutor<T>>(new ComputeExecutor<T>());
-    executor->_device = ctx.device;
-
-    auto computeShader = executor->_load_shader(computeShaderPath);
-    if (computeShader.empty()) {
-      return vk::Result::eErrorInitializationFailed;
+    // Auto-Binding: Get bindings from the Resources struct if it exists
+    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+    if constexpr (!std::is_void_v<TResources>) {
+      bindings = TResources::get_bindings();
     }
 
-    vk::PushConstantRange pushRange{};
-    pushRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
-    pushRange.offset = 0;
-    pushRange.size = sizeof(T);
-
-    vk::PipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-
-    auto layoutRes = executor->_device.createPipelineLayout(layoutInfo);
-    if (layoutRes.result != vk::Result::eSuccess)
-      return layoutRes.result;
-    executor->layout = layoutRes.value;
+    auto layoutRes = executor->_create_layout(
+         vk::ShaderStageFlagBits::eCompute, bindings);
+    if (layoutRes != vk::Result::eSuccess)
+      return layoutRes;
 
     auto moduleRes = executor->_create_module(computeShader);
     if (moduleRes.result != vk::Result::eSuccess)
@@ -52,8 +34,11 @@ public:
     vk::ShaderModule computeModule = moduleRes.value;
 
     vk::ComputePipelineCreateInfo pipelineInfo{};
-    pipelineInfo.stage = {
-        {}, vk::ShaderStageFlagBits::eCompute, computeModule, "main"};
+    pipelineInfo.stage = {{},
+                          vk::ShaderStageFlagBits::eCompute,
+                          computeModule,
+                          entry.c_str(),
+                          specInfo};
     pipelineInfo.layout = executor->layout;
 
     auto pipeRes =
@@ -68,18 +53,9 @@ public:
     return executor;
   }
 
-  ~ComputeExecutor() {
-    if (_device) {
-      if (pipeline)
-        _device.destroyPipeline(pipeline);
-      if (layout)
-        _device.destroyPipelineLayout(layout);
-    }
-  }
-
-  void record(uint32_t x, uint32_t y, uint32_t z, const T &pushConstants,
-              Context &ctx, StreamHandle handle = cDefaultStream) {
-    Stream *stream = ctx.get_stream(handle);
+  void record(uint32_t x, uint32_t y, uint32_t z, const TParams &pushConstants,
+              StreamHandle handle = cDefaultStream) {
+    Stream *stream = this->ctx->get_stream(handle);
     if (!stream)
       return;
 
@@ -87,15 +63,15 @@ public:
     stream->record(_direct_record_cb, &params);
   }
 
-  void record_indirect(const AllocationInfo &indirectBuffer, size_t offset,
-                       const T &pushConstants, Context &ctx,
+  void record_indirect(const AllocationInfo &indirectBuffer,
+                       const TParams &pushConstants,
                        StreamHandle handle = cDefaultStream) {
-    Stream *stream = ctx.get_stream(handle);
+    Stream *stream = this->ctx->get_stream(handle);
     if (!stream)
       return;
 
     IndirectParams params = {this, pushConstants, indirectBuffer.buffer,
-                             offset};
+                             indirectBuffer.offset};
     stream->record(_indirect_record_cb, &params);
   }
 
@@ -103,56 +79,31 @@ private:
   ComputeExecutor() = default;
 
   struct DirectParams {
-    ComputeExecutor<T> *self;
-    T pushConstants;
+    ComputeExecutor<TParams, TResources> *self;
+    TParams const &pushConstants;
     uint32_t x, y, z;
   };
 
   struct IndirectParams {
-    ComputeExecutor<T> *self;
-    T pushConstants;
+    ComputeExecutor<TParams, TResources> *self;
+    TParams const &pushConstants;
     vk::Buffer buffer;
     size_t offset;
   };
 
   static void _direct_record_cb(vk::CommandBuffer cmd, void *data) {
     auto p = static_cast<DirectParams *>(data);
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, p->self->pipeline);
-    cmd.pushConstants(p->self->layout, vk::ShaderStageFlagBits::eCompute, 0,
-                      sizeof(T), &p->pushConstants);
+    p->self->__bind_push_constants(cmd, vk::PipelineBindPoint::eCompute,
+                                   p->pushConstants);
     cmd.dispatch(p->x, p->y, p->z);
   }
 
   static void _indirect_record_cb(vk::CommandBuffer cmd, void *data) {
     auto p = static_cast<IndirectParams *>(data);
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, p->self->pipeline);
-    cmd.pushConstants(p->self->layout, vk::ShaderStageFlagBits::eCompute, 0,
-                      sizeof(T), &p->pushConstants);
+    p->self->__bind_push_constants(cmd, vk::PipelineBindPoint::eCompute,
+                                   p->pushConstants);
     cmd.dispatchIndirect(p->buffer, p->offset);
   }
-
-  std::vector<uint32_t> _load_shader(const std::string &path) {
-    std::ifstream file(path, std::ios::ate | std::ios::binary);
-    if (!file.is_open())
-      return {};
-
-    size_t fileSize = (size_t)file.tellg();
-    std::vector<uint32_t> buffer(fileSize / sizeof(uint32_t));
-    file.seekg(0);
-    file.read((char *)buffer.data(), fileSize);
-    file.close();
-    return buffer;
-  }
-
-  vk::ResultValue<vk::ShaderModule>
-  _create_module(const std::vector<uint32_t> &code) {
-    vk::ShaderModuleCreateInfo createInfo{};
-    createInfo.codeSize = code.size() * sizeof(uint32_t);
-    createInfo.pCode = code.data();
-    return _device.createShaderModule(createInfo);
-  }
-
-  vk::Device _device;
 };
 
 } // namespace pictor

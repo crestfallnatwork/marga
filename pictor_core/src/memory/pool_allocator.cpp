@@ -3,27 +3,9 @@
 
 namespace pictor {
 PoolAllocator::PoolAllocator(Context *ctx) : _ctx(ctx) {
-  vma::AllocationCreateInfo queryInfo{};
-  queryInfo.usage = vma::MemoryUsage::eUnknown;
-  queryInfo.requiredFlags = vk::MemoryPropertyFlagBits::eDeviceLocal;
-
-  uint32_t memTypeIndex = 0;
-  auto res = _ctx->vma_allocator.findMemoryTypeIndex(UINT32_MAX, queryInfo);
-
-  if (!res.has_value()) {
-      /* we need to refactor this */
-      std::terminate();
-  }
-
-  vma::PoolCreateInfo poolInfo{};
-  poolInfo.memoryTypeIndex = memTypeIndex;
-  _pool = _ctx->vma_allocator.createPool(poolInfo).value;
 }
 
 PoolAllocator::~PoolAllocator() {
-  if (_pool && _ctx) {
-    _ctx->vma_allocator.destroyPool(_pool);
-  }
 }
 
 AllocationInfo PoolAllocator::allocate(size_t bytes, size_t alignment) {
@@ -34,6 +16,8 @@ AllocationInfo PoolAllocator::allocate(size_t bytes, size_t alignment) {
   params.bufferUsage = vk::BufferUsageFlagBits::eTransferSrc |
                        vk::BufferUsageFlagBits::eTransferDst |
                        vk::BufferUsageFlagBits::eStorageBuffer |
+                       vk::BufferUsageFlagBits::eIndirectBuffer |
+                       vk::BufferUsageFlagBits::eUniformTexelBuffer |
                        vk::BufferUsageFlagBits::eShaderDeviceAddress;
 
   return allocate(params);
@@ -44,8 +28,8 @@ AllocationInfo PoolAllocator::allocate(PoolAllocatorParams const &params) {
   result.type = params.type;
 
   vma::AllocationCreateInfo localAllocInfo{};
-  localAllocInfo.pool = _pool;
-  localAllocInfo.usage = vma::MemoryUsage::eUnknown;
+  localAllocInfo.usage = vma::MemoryUsage::eAutoPreferDevice;
+  localAllocInfo.flags = {}; // Let VMA choose
 
   vk::BufferCreateInfo bufferInfo{};
   bufferInfo.size = params.size;

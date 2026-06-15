@@ -1,53 +1,36 @@
 #pragma once
 
-#include "pictor_core/context/context.hpp"
-#include "pictor_core/context/result_type.hpp"
-
-#include <vulkan/vulkan.hpp>
-
-#include <fstream>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <vector>
+#include "base_executor.hpp"
 
 namespace pictor {
 
-template <typename T> class MeshExecutor {
+template <typename TParams, typename TResources = void>
+class MeshExecutor : public BaseExecutor<TParams, TResources> {
 public:
-  using PushConstantType = T;
+  static Expected<std::unique_ptr<MeshExecutor<TParams, TResources>>,
+                  vk::Result>
+  create_from_spirv(Context &ctx, const std::vector<uint32_t> &taskShader,
+                    const std::vector<uint32_t> &meshShader,
+                    const std::string &taskEntry = "main",
+                    const std::string &meshEntry = "main",
+                    const vk::SpecializationInfo *specInfo = nullptr) {
 
-  vk::Pipeline pipeline;
-  vk::PipelineLayout layout;
+    auto executor = std::unique_ptr<MeshExecutor<TParams, TResources>>(
+        new MeshExecutor<TParams, TResources>());
+    executor->ctx = &ctx;
 
-  static Expected<std::unique_ptr<MeshExecutor<T>>, vk::Result>
-  create(Context &ctx, const std::string &taskShaderPath,
-         const std::string &meshShaderPath) {
+    vk::ShaderStageFlags pushRangeStages =
+        vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT;
 
-    auto executor = std::unique_ptr<MeshExecutor<T>>(new MeshExecutor<T>());
-    executor->_device = ctx.device;
-
-    auto taskShader = executor->_load_shader(taskShaderPath);
-    auto meshShader = executor->_load_shader(meshShaderPath);
-
-    if (taskShader.empty() || meshShader.empty()) {
-      return vk::Result::eErrorInitializationFailed;
+    // Auto-Binding: Get bindings from the Resources struct if it exists
+    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+    if constexpr (!std::is_void_v<TResources>) {
+      bindings = TResources::get_bindings();
     }
 
-    vk::PushConstantRange pushRange{};
-    pushRange.stageFlags =
-        vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT;
-    pushRange.offset = 0;
-    pushRange.size = sizeof(T);
-
-    vk::PipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-
-    auto layoutRes = executor->_device.createPipelineLayout(layoutInfo);
-    if (layoutRes.result != vk::Result::eSuccess)
-      return layoutRes.result;
-    executor->layout = layoutRes.value;
+    auto layoutRes = executor->_create_layout(pushRangeStages, bindings);
+    if (layoutRes != vk::Result::eSuccess)
+      return layoutRes;
 
     auto taskModuleRes = executor->_create_module(taskShader);
     if (taskModuleRes.result != vk::Result::eSuccess)
@@ -60,10 +43,16 @@ public:
     vk::ShaderModule meshModule = meshModuleRes.value;
 
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
-    stages.push_back(
-        {{}, vk::ShaderStageFlagBits::eTaskEXT, taskModule, "main"});
-    stages.push_back(
-        {{}, vk::ShaderStageFlagBits::eMeshEXT, meshModule, "main"});
+    stages.push_back({{},
+                      vk::ShaderStageFlagBits::eTaskEXT,
+                      taskModule,
+                      taskEntry.c_str(),
+                      specInfo});
+    stages.push_back({{},
+                      vk::ShaderStageFlagBits::eMeshEXT,
+                      meshModule,
+                      meshEntry.c_str(),
+                      specInfo});
 
     vk::PipelineRasterizationStateCreateInfo rasterInfo{};
     rasterInfo.rasterizerDiscardEnable = VK_TRUE;
@@ -97,18 +86,9 @@ public:
     return executor;
   }
 
-  ~MeshExecutor() {
-    if (_device) {
-      if (pipeline)
-        _device.destroyPipeline(pipeline);
-      if (layout)
-        _device.destroyPipelineLayout(layout);
-    }
-  }
-
-  void record(uint32_t x, uint32_t y, uint32_t z, const T &pushConstants,
-              Context &ctx, StreamHandle handle = cDefaultStream) {
-    Stream *stream = ctx.get_stream(handle);
+  void record(uint32_t x, uint32_t y, uint32_t z, const TParams &pushConstants,
+              StreamHandle handle = cDefaultStream) {
+    Stream *stream = this->ctx->get_stream(handle);
     if (!stream)
       return;
 
@@ -116,16 +96,15 @@ public:
     stream->record(_direct_record_cb, &params);
   }
 
-  void record_indirect(const AllocationInfo &indirectBuffer, uint32_t drawCount,
-                       uint32_t stride, const T &pushConstants, Context &ctx,
+  void record_indirect(const AllocationInfo &indirectBuffer,
+                       const TParams &pushConstants,
                        StreamHandle handle = cDefaultStream) {
-    Stream *stream = ctx.get_stream(handle);
+    Stream *stream = this->ctx->get_stream(handle);
     if (!stream)
       return;
 
-    IndirectParams params = {
-        this,      pushConstants, indirectBuffer.buffer, indirectBuffer.offset,
-        drawCount, stride};
+    auto params = IndirectParams{
+        .self = this, .pushConstants = pushConstants, .alloc = indirectBuffer};
     stream->record(_indirect_record_cb, &params);
   }
 
@@ -133,18 +112,15 @@ private:
   MeshExecutor() = default;
 
   struct DirectParams {
-    MeshExecutor<T> *self;
-    T pushConstants;
+    MeshExecutor<TParams, TResources> *self;
+    TParams const &pushConstants;
     uint32_t x, y, z;
   };
 
   struct IndirectParams {
-    MeshExecutor<T> *self;
-    T pushConstants;
-    vk::Buffer buffer;
-    size_t offset;
-    uint32_t drawCount;
-    uint32_t stride;
+    MeshExecutor<TParams, TResources> *self;
+    TParams const &pushConstants;
+    AllocationInfo const &alloc;
   };
 
   static void _direct_record_cb(vk::CommandBuffer cmd, void *data) {
@@ -155,14 +131,9 @@ private:
     renderingInfo.layerCount = 1;
 
     cmd.beginRendering(renderingInfo);
-
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, p->self->pipeline);
-    cmd.pushConstants(p->self->layout,
-                      vk::ShaderStageFlagBits::eTaskEXT |
-                          vk::ShaderStageFlagBits::eMeshEXT,
-                      0, sizeof(T), &p->pushConstants);
+    p->self->__bind_push_constants(cmd, vk::PipelineBindPoint::eGraphics,
+                                   p->pushConstants);
     cmd.drawMeshTasksEXT(p->x, p->y, p->z);
-
     cmd.endRendering();
   }
 
@@ -174,39 +145,11 @@ private:
     renderingInfo.layerCount = 1;
 
     cmd.beginRendering(renderingInfo);
-
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, p->self->pipeline);
-    cmd.pushConstants(p->self->layout,
-                      vk::ShaderStageFlagBits::eTaskEXT |
-                          vk::ShaderStageFlagBits::eMeshEXT,
-                      0, sizeof(T), &p->pushConstants);
-    cmd.drawMeshTasksIndirectEXT(p->buffer, p->offset, p->drawCount, p->stride);
-
+    p->self->__bind_push_constants(cmd, vk::PipelineBindPoint::eGraphics,
+                                   p->pushConstants);
+    cmd.drawMeshTasksIndirectEXT(p->alloc.buffer, p->alloc.offset, 1, 0);
     cmd.endRendering();
   }
-
-  std::vector<uint32_t> _load_shader(const std::string &path) {
-    std::ifstream file(path, std::ios::ate | std::ios::binary);
-    if (!file.is_open())
-      return {};
-
-    size_t fileSize = (size_t)file.tellg();
-    std::vector<uint32_t> buffer(fileSize / sizeof(uint32_t));
-    file.seekg(0);
-    file.read((char *)buffer.data(), fileSize);
-    file.close();
-    return buffer;
-  }
-
-  vk::ResultValue<vk::ShaderModule>
-  _create_module(const std::vector<uint32_t> &code) {
-    vk::ShaderModuleCreateInfo createInfo{};
-    createInfo.codeSize = code.size() * sizeof(uint32_t);
-    createInfo.pCode = code.data();
-    return _device.createShaderModule(createInfo);
-  }
-
-  vk::Device _device;
 };
 
 } // namespace pictor
