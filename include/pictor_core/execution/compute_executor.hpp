@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base_executor.hpp"
+#include <iostream>
 
 namespace pictor {
 
@@ -46,8 +47,10 @@ public:
 
     executor->_device.destroyShaderModule(computeModule);
 
-    if (pipeRes.result != vk::Result::eSuccess)
+    if (pipeRes.result != vk::Result::eSuccess) {
+      std::cerr << "Compute pipeline creation failed" << std::endl;
       return pipeRes.result;
+    }
     executor->pipeline = pipeRes.value;
 
     return executor;
@@ -73,6 +76,16 @@ public:
     IndirectParams params = {this, pushConstants, indirectBuffer.buffer,
                              indirectBuffer.offset};
     stream->record(_indirect_record_cb, &params);
+  }
+
+  /**
+   * Pure BDA variant of direct dispatch.
+   */
+  void __execute_bda(vk::CommandBuffer cmd,
+                     uint32_t x, uint32_t y, uint32_t z,
+                     const TParams &pushConstants) {
+      this->__bind_push_constants(cmd, vk::PipelineBindPoint::eCompute, pushConstants);
+      cmd.dispatch(x, y, z);
   }
 
 private:

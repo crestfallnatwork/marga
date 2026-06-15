@@ -86,6 +86,22 @@ public:
     return executor;
   }
 
+  /**
+   * Pure BDA variant of direct dispatch.
+   */
+  void __execute_bda(vk::CommandBuffer cmd,
+                     uint32_t x, uint32_t y, uint32_t z,
+                     const TParams &pushConstants) {
+    vk::RenderingInfo renderingInfo{};
+    renderingInfo.renderArea = vk::Rect2D{{0, 0}, {1, 1}};
+    renderingInfo.layerCount = 1;
+
+    cmd.beginRendering(renderingInfo);
+    this->__bind_push_constants(cmd, vk::PipelineBindPoint::eGraphics, pushConstants);
+    cmd.drawMeshTasksEXT(x, y, z);
+    cmd.endRendering();
+  }
+
   void record(uint32_t x, uint32_t y, uint32_t z, const TParams &pushConstants,
               StreamHandle handle = cDefaultStream) {
     Stream *stream = this->ctx->get_stream(handle);
