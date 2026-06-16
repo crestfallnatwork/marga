@@ -2,6 +2,7 @@
 
 #include "pictor_core/context/result_type.hpp"
 #include "pictor_core/execution/stream.hpp"
+#include "pictor_core/execution/shader_compiler.hpp"
 #include "pictor_core/memory/allocation_type.hpp"
 #include "pictor_core/memory/pinned_memory_allocator.hpp"
 #include "pictor_core/memory/pool_allocator.hpp"
@@ -57,6 +58,7 @@ public:
 
   std::unique_ptr<PinnedMemoryAllocator> pinned_allocator;
   std::unique_ptr<PoolAllocator> pool_allocator;
+  std::unique_ptr<ShaderCompiler> shader_compiler;
 
 private:
   Context() = default;
@@ -67,6 +69,7 @@ private:
   vk::Result _create_logical_device();
   vk::Result _setup_vma();
   vk::Result _setup_allocators();
+  vk::Result _setup_compiler();
   vk::Result _setup_streams();
 
   std::vector<std::unique_ptr<Stream>> _streams;

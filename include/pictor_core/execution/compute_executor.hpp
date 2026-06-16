@@ -4,17 +4,33 @@
 
 namespace pictor {
 
-template <typename TParams, typename TResources = void>
+template <typename TCode, typename TParams, typename TResources = void>
 class ComputeExecutor : public BaseExecutor<TParams, TResources> {
 public:
-  static Expected<std::unique_ptr<ComputeExecutor<TParams, TResources>>,
+  static Expected<std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>,
+                  vk::Result>
+  create(Context &ctx,
+         const vk::SpecializationInfo *specInfo = nullptr) {
+
+    auto compileResult = ctx.shader_compiler->compile(std::string(TCode::source),
+                                          std::string(TCode::entry_point),
+                                          ShaderStage::Compute);
+    if (!compileResult.success) {
+      return vk::Result::eErrorInitializationFailed;
+    }
+
+    return create_from_spirv(ctx, compileResult.spirv,
+                             std::string(TCode::entry_point), specInfo);
+  }
+
+  static Expected<std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>,
                   vk::Result>
   create_from_spirv(Context &ctx, const std::vector<uint32_t> &computeShader,
                     const std::string &entry = "main",
                     const vk::SpecializationInfo *specInfo = nullptr) {
 
-    auto executor = std::unique_ptr<ComputeExecutor<TParams, TResources>>(
-        new ComputeExecutor<TParams, TResources>());
+    auto executor = std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>(
+        new ComputeExecutor<TCode, TParams, TResources>());
     executor->ctx = &ctx;
 
     // Auto-Binding: Get bindings from the Resources struct if it exists
@@ -37,7 +53,7 @@ public:
     pipelineInfo.stage = {{},
                           vk::ShaderStageFlagBits::eCompute,
                           computeModule,
-                          entry.c_str(),
+                          "main",
                           specInfo};
     pipelineInfo.layout = executor->layout;
 
@@ -75,17 +91,17 @@ public:
     stream->record(_indirect_record_cb, &params);
   }
 
-private:
+  private:
   ComputeExecutor() = default;
 
   struct DirectParams {
-    ComputeExecutor<TParams, TResources> *self;
+    ComputeExecutor<TCode, TParams, TResources> *self;
     TParams const &pushConstants;
     uint32_t x, y, z;
   };
 
   struct IndirectParams {
-    ComputeExecutor<TParams, TResources> *self;
+    ComputeExecutor<TCode, TParams, TResources> *self;
     TParams const &pushConstants;
     vk::Buffer buffer;
     size_t offset;
@@ -104,6 +120,7 @@ private:
                                    p->pushConstants);
     cmd.dispatchIndirect(p->buffer, p->offset);
   }
-};
+  };
+
 
 } // namespace pictor

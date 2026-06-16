@@ -52,22 +52,22 @@ protected:
       layoutInfoDesc.bindingCount = static_cast<uint32_t>(bindings.size());
       layoutInfoDesc.pBindings = bindings.data();
 
-      auto descRes = _device.createDescriptorSetLayout(layoutInfoDesc);
-      if (descRes.result != vk::Result::eSuccess)
-        return descRes.result;
-      desc_layout = descRes.value;
-    }
+    auto descRes = _device.createDescriptorSetLayout(layoutInfoDesc);
+    if (descRes.result != vk::Result::eSuccess)
+      return descRes.result;
+    desc_layout = descRes.value;
+  }
 
-    vk::PipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushRange;
-    layoutInfo.setLayoutCount = bindings.empty() ? 0 : 1;
-    layoutInfo.pSetLayouts = bindings.empty() ? nullptr : &desc_layout;
+  vk::PipelineLayoutCreateInfo layoutInfo{};
+  layoutInfo.pushConstantRangeCount = 1;
+  layoutInfo.pPushConstantRanges = &pushRange;
+  layoutInfo.setLayoutCount = bindings.empty() ? 0 : 1;
+  layoutInfo.pSetLayouts = bindings.empty() ? nullptr : &desc_layout;
 
-    auto layoutRes = _device.createPipelineLayout(layoutInfo);
-    if (layoutRes.result != vk::Result::eSuccess)
-      return layoutRes.result;
-    layout = layoutRes.value;
+  auto layoutRes = _device.createPipelineLayout(layoutInfo);
+  if (layoutRes.result != vk::Result::eSuccess)
+    return layoutRes.result;
+  layout = layoutRes.value;
 
     return vk::Result::eSuccess;
   }
