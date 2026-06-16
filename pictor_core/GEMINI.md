@@ -3,11 +3,62 @@
 ## Project Overview
 `pictor-core` is a C++20 library providing a Vulkan memory management abstraction layer. It relies on the Vulkan Memory Allocator (`VulkanMemoryAllocator-Hpp`), which is fetched automatically via CMake. The library defines core abstractions like an `Allocator` interface, along with implementations like `PoolAllocator` and a high-level `memory_manager` for pooling device memory and workspace allocations. It wraps Vulkan handles (`vk::Buffer`, `vk::Image`) and VMA allocations (`vma::Allocation`) into a unified `AllocationInfo` structure.
 
+## User Integration
+
+To use `pictor-core` in your own project, we recommend using `add_subdirectory`.
+
+### 1. Project Setup
+
+In your `CMakeLists.txt`:
+
+```cmake
+# Add pictor-core as a subdirectory
+add_subdirectory(path/to/pictor_core)
+
+# Define your application
+add_executable(my_app main.cpp)
+
+# Link against the core library
+target_link_libraries(my_app PRIVATE pictor_core)
+
+# Add a shader using the pictor helper
+# This will automatically run the reflection script and generate headers
+pictor_add_shader(my_shader shaders/my_shader.slang)
+
+# Link your app against the shader target to get the generated headers
+target_link_libraries(my_app PRIVATE my_shader)
+```
+
+### 2. C++ Usage
+
+```cpp
+#include "pictor_core/context/context.hpp"
+#include "my_shader.shader.h" // Include the generated header
+
+int main() {
+    auto ctx = pictor::Context::create().value();
+    
+    // Create executor using the generated traits
+    auto exec = my_shader::MyShaderExecutor::create(*ctx).value();
+    
+    // Use reflected structs for parameters
+    my_shader::Params p = {};
+    p.some_value = 42;
+    
+    // Record commands
+    exec->record(1, 1, 1, p);
+    
+    ctx->flush();
+    ctx->sync();
+}
+```
+
 ## Main Technologies
 *   **C++20**
 *   **CMake** (Build system)
 *   **Vulkan** (Graphics/Compute API)
 *   **VulkanMemoryAllocator-Hpp** (Memory management backend)
+*   **Slang** (Shader language and JIT compilation)
 
 ## Directory Structure
 *   `include/pictor_core/`: Contains the public header files.

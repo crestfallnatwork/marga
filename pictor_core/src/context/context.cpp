@@ -131,6 +131,10 @@ vk::Result Context::_init() {
   if (res != vk::Result::eSuccess)
     return res;
 
+  res = _setup_compiler();
+  if (res != vk::Result::eSuccess)
+    return res;
+
   res = _setup_streams();
   return res;
 }
@@ -324,6 +328,15 @@ vk::Result Context::_setup_allocators() {
   pinned_allocator = std::make_unique<PinnedMemoryAllocator>(this);
   pool_allocator = std::make_unique<PoolAllocator>(this);
   return vk::Result::eSuccess;
+}
+
+vk::Result Context::_setup_compiler() {
+  auto res = ShaderCompiler::create();
+  if (res.ok()) {
+    shader_compiler = std::move(res.val());
+    return vk::Result::eSuccess;
+  }
+  return res.err();
 }
 
 vk::Result Context::_setup_streams() {

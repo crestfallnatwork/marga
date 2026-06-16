@@ -4,10 +4,31 @@
 
 namespace pictor {
 
-template <typename TParams, typename TResources = void>
+template <typename TCode, typename TParams, typename TResources = void>
 class MeshExecutor : public BaseExecutor<TParams, TResources> {
 public:
-  static Expected<std::unique_ptr<MeshExecutor<TParams, TResources>>,
+  static Expected<std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>,
+                  vk::Result>
+  create(Context &ctx,
+         const vk::SpecializationInfo *specInfo = nullptr) {
+
+    auto taskRes = ctx.shader_compiler->compile(std::string(TCode::source),
+                                    std::string(TCode::task_entry),
+                                    ShaderStage::Task);
+    auto meshRes = ctx.shader_compiler->compile(std::string(TCode::source),
+                                    std::string(TCode::mesh_entry),
+                                    ShaderStage::Mesh);
+
+    if (!taskRes.success || !meshRes.success) {
+      return vk::Result::eErrorInitializationFailed;
+    }
+
+    return create_from_spirv(ctx, taskRes.spirv, meshRes.spirv,
+                             std::string(TCode::task_entry),
+                             std::string(TCode::mesh_entry), specInfo);
+  }
+
+  static Expected<std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>,
                   vk::Result>
   create_from_spirv(Context &ctx, const std::vector<uint32_t> &taskShader,
                     const std::vector<uint32_t> &meshShader,
@@ -15,8 +36,8 @@ public:
                     const std::string &meshEntry = "main",
                     const vk::SpecializationInfo *specInfo = nullptr) {
 
-    auto executor = std::unique_ptr<MeshExecutor<TParams, TResources>>(
-        new MeshExecutor<TParams, TResources>());
+    auto executor = std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>(
+        new MeshExecutor<TCode, TParams, TResources>());
     executor->ctx = &ctx;
 
     vk::ShaderStageFlags pushRangeStages =
@@ -46,12 +67,12 @@ public:
     stages.push_back({{},
                       vk::ShaderStageFlagBits::eTaskEXT,
                       taskModule,
-                      taskEntry.c_str(),
+                      "main",
                       specInfo});
     stages.push_back({{},
                       vk::ShaderStageFlagBits::eMeshEXT,
                       meshModule,
-                      meshEntry.c_str(),
+                      "main",
                       specInfo});
 
     vk::PipelineRasterizationStateCreateInfo rasterInfo{};
@@ -128,13 +149,13 @@ private:
   MeshExecutor() = default;
 
   struct DirectParams {
-    MeshExecutor<TParams, TResources> *self;
+    MeshExecutor<TCode, TParams, TResources> *self;
     TParams const &pushConstants;
     uint32_t x, y, z;
   };
 
   struct IndirectParams {
-    MeshExecutor<TParams, TResources> *self;
+    MeshExecutor<TCode, TParams, TResources> *self;
     TParams const &pushConstants;
     AllocationInfo const &alloc;
   };

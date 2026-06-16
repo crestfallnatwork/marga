@@ -58,10 +58,12 @@ target_link_libraries(pictor_core
         slang::slang 
 )
 
-# Only build tests if this is the top-level project
+set(PICTOR_CORE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "")
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PictorCoreUtils.cmake)
+
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-    add_executable(test src/test.cpp)
-    target_link_libraries(test 
+    add_executable(library_test src/library_test_main.cpp)
+    target_link_libraries(library_test 
         PRIVATE 
             pictor_core
     )
