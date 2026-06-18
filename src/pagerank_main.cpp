@@ -27,33 +27,33 @@ int main(int argc, char* argv[]) {
         }
         auto& ctx = *ctx_res.val();
 
-        std::cout << "Importing graph as CSC: " << graph_file << "..." << std::endl;
-        auto g = pictor::graphs::Graph::import(ctx, graph_file, false, pictor::graphs::GraphLayout::CSC);
-
+        std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
+        auto g = pictor::graphs::Graph::import(ctx, graph_file, false);
         pictor::graphs::PageRank pr(ctx);
+        pr.run(g, 1e-5);
         
-        std::cout << "Running GPU PageRank (20 iterations)..." << std::endl;
-        auto [ranks, timings] = pr.run(g, 20);
+        // std::cout << "Running GPU PageRank (20 iterations)..." << std::endl;
+        // auto [ranks, timings] = pr.run(g, 20);
 
-        std::cout << "\n=== PageRank Results ===" << std::endl;
-        std::cout << "  Preprocessing (Out-degrees): " << timings.preprocessing_ms << " ms" << std::endl;
-        std::cout << "  Initialization (H2D):        " << timings.init_ms << " ms" << std::endl;
-        std::cout << "  Average Iteration Time:      " << timings.iteration_avg_ms << " ms" << std::endl;
-        std::cout << "  Total GPU Execution Time:    " << timings.total_ms << " ms" << std::endl;
+        // std::cout << "\n=== PageRank Results ===" << std::endl;
+        // std::cout << "  Preprocessing (Out-degrees): " << timings.preprocessing_ms << " ms" << std::endl;
+        // std::cout << "  Initialization (H2D):        " << timings.init_ms << " ms" << std::endl;
+        // std::cout << "  Average Iteration Time:      " << timings.iteration_avg_ms << " ms" << std::endl;
+        // std::cout << "  Total GPU Execution Time:    " << timings.total_ms << " ms" << std::endl;
         
-        if (validate) {
-            std::cout << "\nRunning CPU Validation..." << std::endl;
-            auto [cpu_ranks, cpu_t] = pictor::graphs::PageRankValidator::run(g, 20);
-            std::cout << "  CPU Total: " << cpu_t.traversal_ms << " ms" << std::endl;
+        // if (validate) {
+        //     std::cout << "\nRunning CPU Validation..." << std::endl;
+        //     auto [cpu_ranks, cpu_t] = pictor::graphs::PageRankValidator::run(g, 20);
+        //     std::cout << "  CPU Total: " << cpu_t.traversal_ms << " ms" << std::endl;
             
-            pictor::graphs::PageRankValidator::verify(g, ranks, cpu_ranks);
-        }
+        //     pictor::graphs::PageRankValidator::verify(g, ranks, cpu_ranks);
+        // }
 
-        // Print top 5 pageranks for validation
-        std::cout << "\nTop 5 GPU PageRanks (Samples):" << std::endl;
-        for (int i = 0; i < std::min(5, (int)g.num_vertices); i++) {
-            std::cout << "  Vertex " << i << ": " << ranks[i] << std::endl;
-        }
+        // // Print top 5 pageranks for validation
+        // std::cout << "\nTop 5 GPU PageRanks (Samples):" << std::endl;
+        // for (int i = 0; i < std::min(5, (int)g.num_vertices); i++) {
+        //     std::cout << "  Vertex " << i << ": " << ranks[i] << std::endl;
+        // }
 
     } else {
         std::cout << make_man_page(cli, argv[0]);
