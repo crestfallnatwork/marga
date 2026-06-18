@@ -93,6 +93,60 @@ void page_rank(uint32_t threadId: SV_DispatchThreadID) {
     InterlockedAdd(pageRankIn.current_pr[pageRankIn.column_indices[threadId]], to_push);
 }
 
+/* CSC and vertex pull compute shader */
+
+struct OutDegreeIn {
+    uint64_t* row_offsets;
+    uint32_t* column_indices;
+    uint32_t* out_degrees;
+    uint32_t vertices_n;
+}
+
+// @bind(outdegree)
+[[vk::push_constant]]
+uniform OutDegreeIn outDegreeIn;
+[shader("compute")]
+[numthreads(256,1,1)]
+void outdegree(uint32_t threadId: SV_DispatchThreadID) {
+    if(threadId >= outDegreeIn.vertices_n) {
+        return;
+    }
+    uint32_t degree = outDegreeIn.row_offsets[threadId+1] - outDegreeIn.row_offsets[threadId];
+    uint32_t *start_col = outDegreeIn.column_indices + outDegreeIn.row_offsets[threadId];
+    for(uint32_t i = 0; i < degree; i++) {
+        uint32_t src = *(start_col + i);
+        InterlockedAdd(outDegreeIn.out_degrees[src], 1);
+    }
+}
+
+struct PageRankCSCIn{
+    uint64_t* row_offsets;
+    uint32_t* column_indices;
+    float32_t *current_pr;
+    float32_t *past_pr;
+    uint32_t* out_degrees;
+    uint64_t vertices_n;
+    uint64_t edges_n;
+};
+// @bind(cscPageRank)
+[[vk::push_constant]]
+uniform PageRankCSCIn vprIn;
+[shader("compute")]
+[numthreads(256,1,1)]
+void cscPageRank(uint32_t threadId: SV_DispatchThreadID) {
+    if (threadId >= vprIn.vertices_n)
+        return;
+    float32_t acc = 0.f;
+    uint32_t degree = vprIn.row_offsets[threadId+1] - vprIn.row_offsets[threadId];
+    uint32_t *start_col = vprIn.column_indices + vprIn.row_offsets[threadId];
+    for(uint32_t i = 0; i < degree; i++) {
+        uint32_t src = *(start_col + i);
+        float32_t src_pull = vprIn.past_pr[src]/vprIn.out_degrees[src];
+        acc += (src_pull);
+    }
+    vprIn.current_pr[threadId] = acc;
+}
+
 /* mesh shader */
 
 #define meshWorkGroupSize WAVE_SIZE
@@ -167,7 +221,8 @@ void pr_mesh(
 
     uint out_degree = prIn.row_offsets[src+1] - prIn.row_offsets[src];
     float to_push = prIn.past_pr[src]/out_degree;
-    InterlockedAdd(prIn.current_pr[prIn.column_indices[dst]], to_push);
+    uint32_t* dst_addr = prIn.column_indices + dst;
+    InterlockedAdd(prIn.current_pr[*dst_addr], to_push);
 
     SetMeshOutputCounts(0, 0);
 }

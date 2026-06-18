@@ -11,7 +11,10 @@ PageRank::PageRank(Context &ctx) : _ctx(ctx) {
   reduction.reset(
       pagerank_shader::ReduceComputeExecutor::create(_ctx).val().release());
   pagerank.reset(pagerank_shader::PRExecutor::create(_ctx).val().release());
-  pagerankCompute.reset(pagerank_shader::PageComputeExecutor::create(_ctx).val().release());
+  pagerankCompute.reset(
+      pagerank_shader::PageComputeExecutor::create(_ctx).val().release());
+  cscpr.reset(PagerankCSCExecutor::create(_ctx).val().release());
+  outdegree.reset(OutDegreeExecutor::create(_ctx).val().release());
 }
 
 PageRank::~PageRank() { _cleanup_buffers(); }
@@ -35,15 +38,34 @@ void PageRank::_cleanup_buffers() {
   _ctx.deallocate(past_pr);
   _ctx.deallocate(current_pr);
   _ctx.deallocate(_h_pr_results);
+  _ctx.deallocate(out_degree);
 }
 
-std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph &G,
-                                                             float delta) {
+std::pair<std::vector<float>, PageRankTimings>
+PageRank::run(Graph &G, float delta, GraphLayout layout) {
   using namespace std::chrono_literals;
   using namespace std::chrono;
   /* Prequel allocate buffers and zero them */
   _allocate_buffers(G.num_vertices, G.num_edges);
   _ctx.fsync();
+
+  if (layout == GraphLayout::CSC) {
+    out_degree =
+        _ctx.pool_allocator->allocate(sizeof(uint32_t) * G.num_vertices, 0);
+    _ctx.fill(out_degree, 0);
+    _ctx.barrier(out_degree, Access::TransferWrite, Access::Read);
+    outdegree->record(
+        G.num_vertices, 1, 1,
+        {
+            .row_offsets =
+                reinterpret_cast<uint64_t *>(G.d_row_offsets.address),
+            .column_indices =
+                reinterpret_cast<uint32_t *>(G.d_column_indices.address),
+            .out_degrees = reinterpret_cast<uint32_t *>(out_degree.address),
+            .vertices_n = static_cast<uint32_t>(G.num_vertices),
+        });
+    _ctx.fsync();
+  }
 
   auto times = 0ms;
   uint64_t iterations = 0;
@@ -55,16 +77,30 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph &G,
     h_not_done->flag = false;
     _ctx.flush(not_done_flag);
     auto t1 = std::chrono::high_resolution_clock::now();
-    PageRankIn pagerankIn = {
-        .row_offsets = reinterpret_cast<uint64_t *>(G.d_row_offsets.address),
-        .column_indices =
-            reinterpret_cast<uint32_t *>(G.d_column_indices.address),
-        .current_pr = reinterpret_cast<float *>(curr->address),
-        .past_pr = reinterpret_cast<float *>(past->address),
-        .vertices_n = G.num_vertices,
-        .edges_n = G.num_edges};
-    pagerank->record(G.num_vertices, 1, 1, pagerankIn);
-    // pagerankCompute->record(G.num_edges, 1, 1, pagerankIn);
+    if (layout == GraphLayout::CSC) {
+        PageRankCSCIn pagerankIn = {
+            .row_offsets = reinterpret_cast<uint64_t *>(G.d_row_offsets.address),
+            .column_indices =
+                reinterpret_cast<uint32_t *>(G.d_column_indices.address),
+            .current_pr = reinterpret_cast<float *>(curr->address),
+            .past_pr = reinterpret_cast<float *>(past->address),
+            .out_degrees = reinterpret_cast<uint32_t*>(out_degree.address),
+            .vertices_n = G.num_vertices,
+            .edges_n = G.num_edges,
+        };
+        cscpr->record(G.num_vertices, 1, 1, pagerankIn);
+    } else {
+        PageRankIn pagerankIn = {
+            .row_offsets = reinterpret_cast<uint64_t *>(G.d_row_offsets.address),
+            .column_indices =
+                reinterpret_cast<uint32_t *>(G.d_column_indices.address),
+            .current_pr = reinterpret_cast<float *>(curr->address),
+            .past_pr = reinterpret_cast<float *>(past->address),
+            .vertices_n = G.num_vertices,
+            .edges_n = G.num_edges};
+        // pagerank->record(G.num_vertices, 1, 1, pagerankIn);
+        pagerankCompute->record(G.num_edges, 1, 1, pagerankIn);
+    }
 
     _ctx.barrier(*curr, Access::Write, Access::Read);
 
@@ -84,7 +120,8 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph &G,
 
     _ctx.invalidate(not_done_flag);
 
-    std::cout << std::format("Iteration: {}, Time: {}\n", iterations, duration_cast<milliseconds>(t2 - t1));
+    std::cout << std::format("Iteration: {}, Time: {}\n", iterations,
+                             duration_cast<milliseconds>(t2 - t1));
 
     times = times + duration_cast<milliseconds>(t2 - t1);
     iterations++;

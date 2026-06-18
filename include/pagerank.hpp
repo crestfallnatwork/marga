@@ -23,7 +23,8 @@ public:
   PageRank(Context &ctx);
   ~PageRank();
 
-  std::pair<std::vector<float>, PageRankTimings> run(Graph &g, float delta);
+  std::pair<std::vector<float>, PageRankTimings>
+  run(Graph &g, float delta, GraphLayout layout = GraphLayout::CSR);
 
 private:
   Context &_ctx;
@@ -32,14 +33,23 @@ private:
   using ReductionFlag = pagerank_shader::ReductionFlag;
   using ReductionIn = pagerank_shader::ReductionIn;
 
-  
   std::unique_ptr<pagerank_shader::PageComputeExecutor> pagerankCompute;
   std::unique_ptr<pagerank_shader::PRExecutor> pagerank;
   using PageRankIn = pagerank_shader::PageRankIn;
 
+  using PagerankCSCExecutor = pagerank_shader::CscpagerankComputeExecutor;
+  std::unique_ptr<PagerankCSCExecutor> cscpr;
+  using PageRankCSCIn = pagerank_shader::PageRankCSCIn;
+
+  using OutDegreeExecutor = pagerank_shader::OutdegreeComputeExecutor;
+  std::unique_ptr<OutDegreeExecutor> outdegree;
+  using OutDegreeIn = pagerank_shader::OutDegreeIn;
+
+
   AllocationInfo not_done_flag;
   AllocationInfo past_pr;
   AllocationInfo current_pr;
+  AllocationInfo out_degree;
   AllocationInfo _h_pr_results;
 
   void _allocate_buffers(uint64_t num_vertices, uint64_t num_edges);
