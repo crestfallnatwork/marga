@@ -1,150 +1,113 @@
-
-// Standard Vulkan Indirect Dispatch Layout
-struct DispatchIndirectCommand {
-    uint x, y, z;
-};
-
-// The payload passed from Task to Mesh shader
-struct TaskPayload {
-    uint vertex_ids[32];
-    uint edge_offsets[33];
+struct SharedBFSPayload {
+    uint vertex_ids[WAVE_SIZE];
+    uint edge_offsets[WAVE_SIZE+1];
     uint total_edges;
 };
+groupshared SharedBFSPayload sharedBFSPayload;
 
-// All parameters passed via Push Constants (Pure BDA)
-struct Params {
-    uint32_t unused;
+struct BFSIn {
     uint32_t current_level;
-    uint64_t row_offsets;
-    uint64_t column_indices;
-    uint64_t visited;
-    uint64_t distances;
-    uint64_t current_frontier;
-    uint64_t next_frontier;
-    uint64_t current_frontier_size;
-    uint64_t next_frontier_size;
-    uint64_t indirect_buffer;
+    uint64_t* row_offsets;
+    uint32_t* column_indices;
+    uint32_t* visited;
+    uint32_t* distances;
+    uint32_t* current_frontier;
+    uint32_t* next_frontier;
+    uint32_t* current_frontier_size;
+    uint32_t* next_frontier_size;
     uint64_t num_vertices;
 };
-
+static const uint cMaxMeshDim = 65535;
+// @bind(bfs_task)
 [[vk::push_constant]]
-uniform Params p;
-
-groupshared TaskPayload sharedPayload;
-
-// --- Entry Point: Indirect Dispatch Preparation ---
-[shader("compute")]
-[numthreads(1, 1, 1)]
-void compute_indirect() {
-    uint* size_ptr = (uint*)p.next_frontier_size;
-    uint size = *size_ptr;
-    
-    uint total_groups = (size + 31) / 32;
-    
-    DispatchIndirectCommand* cmd = (DispatchIndirectCommand*)p.indirect_buffer;
-    
-    if (total_groups <= 65535) {
-        cmd->x = total_groups;
-        cmd->y = 1;
-    } else {
-        cmd->x = 65535;
-        cmd->y = (total_groups + 65534) / 65535;
-    }
-    cmd->z = 1;
-}
-
-// --- Entry Point: Task/Amplification Shader ---
+uniform BFSIn bfsIn;
 [shader("amplification")]
-[numthreads(32, 1, 1)]
-void task(
-    uint3 threadId : SV_DispatchThreadID,
-    uint lid : SV_GroupIndex,
-    uint3 groupId : SV_GroupID
+[numthreads(WAVE_SIZE, 1, 1)]
+void bfs_task(
+    uint threadId : SV_DispatchThreadID,
+    uint lid : SV_GroupIndex
 ) {
-    uint current_size = *((uint*)p.current_frontier_size);
-    uint tid = groupId.y * (65535 * 32) + threadId.x;
-
     uint v = 0xFFFFFFFF;
-    if (tid < current_size) {
-        v = ((uint*)p.current_frontier)[tid];
+    uint current_size = *bfsIn.current_frontier_size;
+    if (threadId < current_size) {
+        v = bfsIn.current_frontier[threadId];
     }
 
     uint degree = 0;
     if (v != 0xFFFFFFFF) {
-        uint64_t* row_offsets = (uint64_t*)p.row_offsets;
-        degree = uint(row_offsets[v + 1] - row_offsets[v]);
+        degree = uint(bfsIn.row_offsets[v + 1] - bfsIn.row_offsets[v]);
     }
 
     uint wave_offset = WavePrefixSum(degree);
     uint wave_total = WaveActiveSum(degree);
 
-    sharedPayload.vertex_ids[lid] = v;
-    sharedPayload.edge_offsets[lid] = wave_offset;
+    sharedBFSPayload.vertex_ids[lid] = v;
+    sharedBFSPayload.edge_offsets[lid] = wave_offset;
     
-    if (lid == 31) {
-        sharedPayload.edge_offsets[32] = wave_offset + degree;
-        sharedPayload.total_edges = wave_total;
+    if (lid == WAVE_SIZE - 1) {
+        sharedBFSPayload.edge_offsets[WAVE_SIZE] = wave_offset + degree;
+        sharedBFSPayload.total_edges = wave_total;
     }
 
     GroupMemoryBarrierWithGroupSync();
+    uint mesh_count = (sharedBFSPayload.total_edges + 127) / 128;
 
-    uint mesh_count = (sharedPayload.total_edges + 127) / 128;
-    DispatchMesh(mesh_count, 1, 1, sharedPayload);
+    uint mesh_x = mesh_count > cMaxMeshDim ? cMaxMeshDim : mesh_count;
+    uint mesh_y = mesh_count > cMaxMeshDim ?
+                  ((mesh_count + cMaxMeshDim - 1) / cMaxMeshDim): 1;
+
+    DispatchMesh(mesh_x, mesh_y, 1, sharedBFSPayload);
 }
 
-// --- Entry Point: Mesh Shader ---
 [shader("mesh")]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
-void mesh(
+void bfs_mesh(
     uint lid : SV_GroupIndex,
     uint3 gid : SV_GroupID,
-    in payload TaskPayload inPayload,
+    in payload SharedBFSPayload inPayload,
     out vertices float4 vertices[1],
     out indices uint indices[1]
 ) {
-    uint edge_idx = gid.x * 128 + lid;
-    
+    uint gId = (gid.y*cMaxMeshDim) + gid.x;
+    uint edge_idx = gId*128 + lid;
+
+    if(edge_idx >= inPayload.total_edges) {
+        SetMeshOutputCounts(0, 0);
+        return;
+    }
+
     bool added = false;
     uint neighbor = 0xFFFFFFFF;
+    uint parent_idx = 0;
 
-    if (edge_idx < inPayload.total_edges) {
-        uint low = 0;
-        uint high = 31;
-        uint parent_idx = 0;
-        while (low <= high) {
-            uint mid = (low + high) / 2;
-            if (inPayload.edge_offsets[mid] <= edge_idx) {
-                parent_idx = mid;
-                low = mid + 1;
-            } else {
-                if (mid == 0) break;
-                high = mid - 1;
-            }
+    /* evil binary search */
+    [unroll]
+    for (uint step = (WAVE_SIZE >> 1); step > 0; step >>= 1) {
+        if (inPayload.edge_offsets[parent_idx + step] <= edge_idx) {
+            parent_idx += step;
         }
+    }
 
-        uint u = inPayload.vertex_ids[parent_idx];
-        uint64_t* rows = (uint64_t*)p.row_offsets;
-        uint64_t u_start = rows[u];
-        uint64_t local_edge_offset = uint64_t(edge_idx - inPayload.edge_offsets[parent_idx]);
-        uint64_t global_edge_idx = u_start + local_edge_offset;
+    uint u = inPayload.vertex_ids[parent_idx];
+    uint64_t u_start = bfsIn.row_offsets[u];
+    uint64_t local_edge_offset = edge_idx - inPayload.edge_offsets[parent_idx];
+    uint64_t global_edge_idx = u_start + local_edge_offset;
 
-        neighbor = ((uint32_t*)p.column_indices)[global_edge_idx];
+    uint64_t byte_addr = uint64_t(bfsIn.column_indices) + (global_edge_idx * 4ull);
+    neighbor = *(uint32_t*)byte_addr;
 
-        uint word_idx = neighbor / 32;
-        uint bit_idx = neighbor % 32;
-        uint mask = 1 << bit_idx;
+    uint word_idx = neighbor / 32;
+    uint bit_idx = neighbor % 32;
+    uint mask = 1 << bit_idx;
 
-        uint32_t* visited = (uint32_t*)p.visited;
-        
-        if ((visited[word_idx] & mask) == 0) {
-            uint old_val;
-            InterlockedOr(visited[word_idx], mask, old_val);
+    if ((bfsIn.visited[word_idx] & mask) == 0) {
+        uint old_val;
+        InterlockedOr(bfsIn.visited[word_idx], mask, old_val);
 
-            if ((old_val & mask) == 0) {
-                added = true;
-                ((uint32_t*)p.distances)[neighbor] = p.current_level + 1;
-            }
+        if ((old_val & mask) == 0) {
+            added = true;
+            bfsIn.distances[neighbor] = bfsIn.current_level + 1;
         }
     }
 
@@ -153,13 +116,79 @@ void mesh(
     
     uint global_base_pos = 0;
     if (WaveIsFirstLane()) {
-        InterlockedAdd(*((uint*)p.next_frontier_size), wave_count, global_base_pos);
+        InterlockedAdd(*bfsIn.next_frontier_size, wave_count, global_base_pos);
     }
     global_base_pos = WaveReadLaneFirst(global_base_pos);
     
     if (added) {
-        ((uint*)p.next_frontier)[global_base_pos + wave_offset] = neighbor;
+        bfsIn.next_frontier[global_base_pos + wave_offset] = neighbor;
     }
 
     SetMeshOutputCounts(0, 0);
+}
+
+/* AI generated vertex based shader sanity check
+ * that this arch indeed makes sense and is
+ * strictly better for sparse power law graphs
+ * On RTX 2070:
+ * GAP-twitter: ~8x faster
+ * soc-orkut: ~3x faster
+ */
+// @bind(compute_bfs)
+[[vk::push_constant]]
+uniform BFSIn bfsInCompute;
+[shader("compute")]
+[numthreads(128, 1, 1)]
+void compute_bfs(uint3 tid : SV_DispatchThreadID) {
+    uint current_size = *bfsInCompute.current_frontier_size;
+    uint v = 0xFFFFFFFF;
+
+    if (tid.x < current_size) {
+        v = bfsInCompute.current_frontier[tid.x];
+    }
+
+    uint64_t start = (v != 0xFFFFFFFF) ? bfsInCompute.row_offsets[v] : 0;
+    uint64_t end   = (v != 0xFFFFFFFF) ? bfsInCompute.row_offsets[v+1] : 0;
+    uint64_t edge_iter = start;
+
+    while (WaveActiveAnyTrue(edge_iter < end)) {
+        bool process_edge = (edge_iter < end);
+        uint neighbor = 0xFFFFFFFF;
+        bool added = false;
+
+        if (process_edge) {
+            uint64_t byte_addr = uint64_t(bfsInCompute.column_indices) + (edge_iter * 4ull);
+            neighbor = *(uint32_t*)byte_addr;
+            edge_iter++;
+
+            uint word_idx = neighbor / 32;
+            uint bit_idx = neighbor % 32;
+            uint mask = 1 << bit_idx;
+
+            if ((bfsInCompute.visited[word_idx] & mask) == 0) {
+                uint old_val;
+                InterlockedOr(bfsInCompute.visited[word_idx], mask, old_val);
+
+                if ((old_val & mask) == 0) {
+                    added = true;
+                    bfsInCompute.distances[neighbor] = bfsInCompute.current_level + 1;
+                }
+            }
+        }
+
+        uint wave_count = WaveActiveCountBits(added);
+        uint wave_offset = WavePrefixCountBits(added);
+
+        uint global_base_pos = 0;
+        
+        if (WaveIsFirstLane() && wave_count > 0) {
+            InterlockedAdd(*bfsInCompute.next_frontier_size, wave_count, global_base_pos);
+        }
+        
+        global_base_pos = WaveReadLaneFirst(global_base_pos);
+
+        if (added) {
+            bfsInCompute.next_frontier[global_base_pos + wave_offset] = neighbor;
+        }
+    }
 }

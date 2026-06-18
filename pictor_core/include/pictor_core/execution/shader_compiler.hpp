@@ -24,7 +24,8 @@ public:
   ~ShaderCompiler();
 
   CompileResult compile(const std::string &source,
-                        const std::string &entryPoint, ShaderStage stage);
+                        const std::string &entryPoint, ShaderStage stage,
+                        uint32_t subgroupSize = 32);
 
 private:
   ShaderCompiler();

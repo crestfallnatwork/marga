@@ -29,6 +29,7 @@ public:
   vk::Result flush(vk::Queue queue);
 
   void synchronize();
+  vk::Result fsync(vk::Queue queue); 
 
   void barrier(const AllocationInfo &resource, Access from, Access to);
   void barrier(const std::vector<ResourceBarrier>& barriers);

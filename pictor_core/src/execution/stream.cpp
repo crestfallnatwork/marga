@@ -8,7 +8,7 @@ Stream::Stream(vk::Device dev, uint32_t queue_family_index) : device(dev) {
   vk::CommandPoolCreateInfo poolInfo{};
   poolInfo.queueFamilyIndex = queue_family_index;
   poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-  
+
   auto poolRes = device.createCommandPool(poolInfo);
   if (poolRes.result == vk::Result::eSuccess) {
     command_pool = poolRes.value;
@@ -34,13 +34,16 @@ Stream::Stream(vk::Device dev, uint32_t queue_family_index) : device(dev) {
 Stream::~Stream() {
   if (device) {
     synchronize();
-    for (auto f : _fences) device.destroyFence(f);
-    if (command_pool) device.destroyCommandPool(command_pool);
+    for (auto f : _fences)
+      device.destroyFence(f);
+    if (command_pool)
+      device.destroyCommandPool(command_pool);
   }
 }
 
 vk::Result Stream::begin() {
-  if (_recording) return vk::Result::eSuccess;
+  if (_recording)
+    return vk::Result::eSuccess;
 
   (void)device.waitForFences(1, &_fences[_current_frame], VK_TRUE, UINT64_MAX);
   (void)device.resetFences(1, &_fences[_current_frame]);
@@ -49,7 +52,7 @@ vk::Result Stream::begin() {
 
   vk::CommandBufferBeginInfo beginInfo{};
   beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-  
+
   vk::Result res = _command_buffers[_current_frame].begin(beginInfo);
   if (res == vk::Result::eSuccess) {
     _recording = true;
@@ -58,7 +61,8 @@ vk::Result Stream::begin() {
 }
 
 vk::Result Stream::end() {
-  if (!_recording) return vk::Result::eSuccess;
+  if (!_recording)
+    return vk::Result::eSuccess;
 
   vk::Result res = _command_buffers[_current_frame].end();
   if (res == vk::Result::eSuccess) {
@@ -68,29 +72,40 @@ vk::Result Stream::end() {
 }
 
 vk::Result Stream::flush(vk::Queue queue) {
-  if (!_recording) return vk::Result::eSuccess;
+  if (!_recording)
+    return vk::Result::eSuccess;
 
   vk::Result res = end();
-  if (res != vk::Result::eSuccess) return res;
+  if (res != vk::Result::eSuccess)
+    return res;
 
   vk::SubmitInfo submitInfo{};
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &_command_buffers[_current_frame];
 
   res = queue.submit(1, &submitInfo, _fences[_current_frame]);
-  if (res != vk::Result::eSuccess) return res;
+  if (res != vk::Result::eSuccess)
+    return res;
 
   _current_frame = (_current_frame + 1) % 2;
   return vk::Result::eSuccess;
 }
 
-void Stream::synchronize() {
-    (void)device.waitForFences(2, _fences.data(), VK_TRUE, UINT64_MAX);
+vk::Result Stream::fsync(vk::Queue queue) {
+  auto res = flush(queue);
+  if(res != vk::Result::eSuccess) return res;
+  synchronize();
+  return vk::Result::eSuccess;
 }
 
-void Stream::barrier(const AllocationInfo& resource, Access from, Access to) {
+void Stream::synchronize() {
+  (void)device.waitForFences(2, _fences.data(), VK_TRUE, UINT64_MAX);
+}
+
+void Stream::barrier(const AllocationInfo &resource, Access from, Access to) {
   if (!_recording) {
-      if (begin() != vk::Result::eSuccess) return;
+    if (begin() != vk::Result::eSuccess)
+      return;
   }
 
   auto fromInfo = get_vulkan_access_info(from);
@@ -112,42 +127,45 @@ void Stream::barrier(const AllocationInfo& resource, Access from, Access to) {
   _command_buffers[_current_frame].pipelineBarrier2(dependencyInfo);
 }
 
-void Stream::barrier(const std::vector<ResourceBarrier>& barriers) {
+void Stream::barrier(const std::vector<ResourceBarrier> &barriers) {
   if (!_recording) {
-      if (begin() != vk::Result::eSuccess) return;
+    if (begin() != vk::Result::eSuccess)
+      return;
   }
 
   std::vector<vk::BufferMemoryBarrier2> bufferBarriers;
   bufferBarriers.reserve(barriers.size());
 
-  for (const auto& b : barriers) {
-      auto fromInfo = get_vulkan_access_info(b.from);
-      auto toInfo = get_vulkan_access_info(b.to);
+  for (const auto &b : barriers) {
+    auto fromInfo = get_vulkan_access_info(b.from);
+    auto toInfo = get_vulkan_access_info(b.to);
 
-      vk::BufferMemoryBarrier2 bufferBarrier{};
-      bufferBarrier.srcStageMask = fromInfo.stage;
-      bufferBarrier.srcAccessMask = fromInfo.access;
-      bufferBarrier.dstStageMask = toInfo.stage;
-      bufferBarrier.dstAccessMask = toInfo.access;
-      bufferBarrier.buffer = b.resource->buffer;
-      bufferBarrier.offset = b.resource->offset;
-      bufferBarrier.size = b.resource->size;
-      
-      bufferBarriers.push_back(bufferBarrier);
+    vk::BufferMemoryBarrier2 bufferBarrier{};
+    bufferBarrier.srcStageMask = fromInfo.stage;
+    bufferBarrier.srcAccessMask = fromInfo.access;
+    bufferBarrier.dstStageMask = toInfo.stage;
+    bufferBarrier.dstAccessMask = toInfo.access;
+    bufferBarrier.buffer = b.resource->buffer;
+    bufferBarrier.offset = b.resource->offset;
+    bufferBarrier.size = b.resource->size;
+
+    bufferBarriers.push_back(bufferBarrier);
   }
 
   vk::DependencyInfo dependencyInfo{};
-  dependencyInfo.bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size());
+  dependencyInfo.bufferMemoryBarrierCount =
+      static_cast<uint32_t>(bufferBarriers.size());
   dependencyInfo.pBufferMemoryBarriers = bufferBarriers.data();
 
   _command_buffers[_current_frame].pipelineBarrier2(dependencyInfo);
 }
 
-void Stream::record(RecordCallback cb, void* user_data) {
+void Stream::record(RecordCallback cb, void *user_data) {
   if (!_recording) {
-      if (begin() != vk::Result::eSuccess) return;
+    if (begin() != vk::Result::eSuccess)
+      return;
   }
-  
+
   if (cb) {
     cb(_command_buffers[_current_frame], user_data);
   }
@@ -155,7 +173,8 @@ void Stream::record(RecordCallback cb, void* user_data) {
 
 void Stream::_copy(const AllocationInfo &src, const AllocationInfo &dst) {
   if (!_recording) {
-      if (begin() != vk::Result::eSuccess) return;
+    if (begin() != vk::Result::eSuccess)
+      return;
   }
 
   vk::BufferCopy copyRegion{};
@@ -163,21 +182,28 @@ void Stream::_copy(const AllocationInfo &src, const AllocationInfo &dst) {
   copyRegion.dstOffset = dst.offset;
   copyRegion.size = std::min(src.size, dst.size);
 
-  _command_buffers[_current_frame].copyBuffer(src.buffer, dst.buffer, copyRegion);
+  _command_buffers[_current_frame].copyBuffer(src.buffer, dst.buffer,
+                                              copyRegion);
 }
 
-void Stream::_fill(const AllocationInfo &dst, size_t offset, size_t size, uint32_t value) {
+void Stream::_fill(const AllocationInfo &dst, size_t offset, size_t size,
+                   uint32_t value) {
   if (!_recording) {
-      if (begin() != vk::Result::eSuccess) return;
+    if (begin() != vk::Result::eSuccess)
+      return;
   }
-  _command_buffers[_current_frame].fillBuffer(dst.buffer, dst.offset + offset, size, value);
+  _command_buffers[_current_frame].fillBuffer(dst.buffer, dst.offset + offset,
+                                              size, value);
 }
 
-void Stream::_update(const AllocationInfo &dst, size_t offset, size_t size, const void *data) {
+void Stream::_update(const AllocationInfo &dst, size_t offset, size_t size,
+                     const void *data) {
   if (!_recording) {
-      if (begin() != vk::Result::eSuccess) return;
+    if (begin() != vk::Result::eSuccess)
+      return;
   }
-  _command_buffers[_current_frame].updateBuffer(dst.buffer, dst.offset + offset, size, data);
+  _command_buffers[_current_frame].updateBuffer(dst.buffer, dst.offset + offset,
+                                                size, data);
 }
 
 } // namespace pictor

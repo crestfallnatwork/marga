@@ -30,7 +30,8 @@ ShaderCompiler::create() {
 
 CompileResult ShaderCompiler::compile(const std::string &source,
                                       const std::string &entryPoint,
-                                      ShaderStage stage) {
+                                      ShaderStage stage,
+                                      uint32_t subgroupSize) {
   CompileResult result;
 
   // Create a fresh session for each compilation to avoid internal dictionary collisions
@@ -41,6 +42,13 @@ CompileResult ShaderCompiler::compile(const std::string &source,
   slang::SessionDesc sessionDesc{};
   sessionDesc.targets = &targetDesc;
   sessionDesc.targetCount = 1;
+
+  std::string waveSizeStr = std::to_string(subgroupSize);
+  slang::PreprocessorMacroDesc macros[] = {
+      {"WAVE_SIZE", waveSizeStr.c_str()}
+  };
+  sessionDesc.preprocessorMacros = macros;
+  sessionDesc.preprocessorMacroCount = 1;
 
   Slang::ComPtr<slang::ISession> session;
   if (SLANG_FAILED(_impl->globalSession->createSession(sessionDesc, session.writeRef()))) {

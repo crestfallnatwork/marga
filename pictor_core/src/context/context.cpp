@@ -42,11 +42,19 @@ StreamHandle Context::create_stream() {
   return handle;
 }
 
-void Context::flush(StreamHandle handle) {
+vk::Result Context::submit(StreamHandle handle) {
   Stream *s = get_stream(handle);
   if (s) {
-    (void)s->flush(queue);
+    return s->flush(queue);
   }
+  return vk::Result::eErrorInvalidExternalHandle;
+}
+vk::Result Context::fsync(StreamHandle handle) {
+  Stream *s = get_stream(handle);
+  if (s) {
+    return s->fsync(queue);
+  }
+  return vk::Result::eErrorInvalidExternalHandle;
 }
 
 Stream *Context::get_stream(StreamHandle handle) {
@@ -109,6 +117,8 @@ void Context::update(const AllocationInfo &dst, size_t offset, size_t size,
 }
 
 void Context::deallocate(AllocationInfo &info) { info.alloc->deallocate(info); }
+void Context::invalidate(AllocationInfo &info) { info.alloc->invalidate(info); }
+void Context::flush(AllocationInfo &info) { info.alloc->flush(info); }
 
 vk::Result Context::_init() {
   vk::Result res = _create_instance();
@@ -148,6 +158,9 @@ vk::Result Context::_create_instance() {
   appInfo.apiVersion = VK_API_VERSION_1_3;
 
   std::vector<const char *> layers = {};
+#ifdef PICTOR_DEBUG
+  layers.push_back("VK_LAYER_KHRONOS_validation");
+#endif
 
   vk::InstanceCreateInfo createInfo{};
   createInfo.pApplicationInfo = &appInfo;
@@ -251,11 +264,16 @@ vk::Result Context::_create_logical_device() {
 
   std::vector<const char *> deviceExtensions = {
       VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
-      VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME};
+      VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+      VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME
+  };
+  vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures;
+  atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
 
   vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures;
   meshFeatures.meshShader = VK_TRUE;
   meshFeatures.taskShader = VK_TRUE;
+  meshFeatures.pNext = &atomicFloatFeatures;
 
   vk::PhysicalDeviceBufferDeviceAddressFeatures bdaFeatures;
   bdaFeatures.bufferDeviceAddress = VK_TRUE;

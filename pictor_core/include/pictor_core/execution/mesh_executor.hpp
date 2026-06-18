@@ -7,17 +7,42 @@ namespace pictor {
 template <typename TCode, typename TParams, typename TResources = void>
 class MeshExecutor : public BaseExecutor<TParams, TResources> {
 public:
+  static inline constexpr uint32_t cTaskSubgroupMultiplierX =
+      TCode::cTaskSubgroupMultiplierX;
+  static inline constexpr uint32_t cTaskGroupSizeX = TCode::cTaskGroupSizeX;
+  static inline constexpr uint32_t cTaskSubgroupMultiplierY =
+      TCode::cTaskSubgroupMultiplierY;
+  static inline constexpr uint32_t cTaskGroupSizeY = TCode::cTaskGroupSizeY;
+  static inline constexpr uint32_t cTaskSubgroupMultiplierZ =
+      TCode::cTaskSubgroupMultiplierZ;
+  static inline constexpr uint32_t cTaskGroupSizeZ = TCode::cTaskGroupSizeZ;
+
+  static inline constexpr uint32_t cMeshSubgroupMultiplierX =
+      TCode::cMeshSubgroupMultiplierX;
+  static inline constexpr uint32_t cMeshGroupSizeX = TCode::cMeshGroupSizeX;
+  static inline constexpr uint32_t cMeshSubgroupMultiplierY =
+      TCode::cMeshSubgroupMultiplierY;
+  static inline constexpr uint32_t cMeshGroupSizeY = TCode::cMeshGroupSizeY;
+  static inline constexpr uint32_t cMeshSubgroupMultiplierZ =
+      TCode::cMeshSubgroupMultiplierZ;
+  static inline constexpr uint32_t cMeshGroupSizeZ = TCode::cMeshGroupSizeZ;
+  const uint32_t taskWgX;
+  const uint32_t taskWgY;
+  const uint32_t taskWgZ;
+  const uint32_t meshWgX;
+  const uint32_t meshWgY;
+  const uint32_t meshWgZ;
+
   static Expected<std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>,
                   vk::Result>
-  create(Context &ctx,
-         const vk::SpecializationInfo *specInfo = nullptr) {
+  create(Context &ctx, const vk::SpecializationInfo *specInfo = nullptr) {
 
-    auto taskRes = ctx.shader_compiler->compile(std::string(TCode::source),
-                                    std::string(TCode::task_entry),
-                                    ShaderStage::Task);
-    auto meshRes = ctx.shader_compiler->compile(std::string(TCode::source),
-                                    std::string(TCode::mesh_entry),
-                                    ShaderStage::Mesh);
+    auto taskRes = ctx.shader_compiler->compile(
+        std::string(TCode::source), std::string(TCode::task_entry),
+        ShaderStage::Task, ctx.subgroup_size);
+    auto meshRes = ctx.shader_compiler->compile(
+        std::string(TCode::source), std::string(TCode::mesh_entry),
+        ShaderStage::Mesh, ctx.subgroup_size);
 
     if (!taskRes.success || !meshRes.success) {
       return vk::Result::eErrorInitializationFailed;
@@ -35,9 +60,22 @@ public:
                     const std::string &taskEntry = "main",
                     const std::string &meshEntry = "main",
                     const vk::SpecializationInfo *specInfo = nullptr) {
+    uint32_t taskWgX =
+        ctx.subgroup_size * cTaskSubgroupMultiplierX + cTaskGroupSizeX;
+    uint32_t taskWgY =
+        ctx.subgroup_size * cTaskSubgroupMultiplierY + cTaskGroupSizeY;
+    uint32_t taskWgZ =
+        ctx.subgroup_size * cTaskSubgroupMultiplierZ + cTaskGroupSizeZ;
+    uint32_t meshWgX =
+        ctx.subgroup_size * cMeshSubgroupMultiplierX + cMeshGroupSizeX;
+    uint32_t meshWgY =
+        ctx.subgroup_size * cMeshSubgroupMultiplierY + cMeshGroupSizeY;
+    uint32_t meshWgZ =
+        ctx.subgroup_size * cMeshSubgroupMultiplierZ + cMeshGroupSizeZ;
 
     auto executor = std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>(
-        new MeshExecutor<TCode, TParams, TResources>());
+        new MeshExecutor<TCode, TParams, TResources>(
+            taskWgX, taskWgY, taskWgZ, meshWgX, meshWgY, meshWgZ));
     executor->ctx = &ctx;
 
     vk::ShaderStageFlags pushRangeStages =
@@ -64,16 +102,10 @@ public:
     vk::ShaderModule meshModule = meshModuleRes.value;
 
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
-    stages.push_back({{},
-                      vk::ShaderStageFlagBits::eTaskEXT,
-                      taskModule,
-                      "main",
-                      specInfo});
-    stages.push_back({{},
-                      vk::ShaderStageFlagBits::eMeshEXT,
-                      meshModule,
-                      "main",
-                      specInfo});
+    stages.push_back(
+        {{}, vk::ShaderStageFlagBits::eTaskEXT, taskModule, "main", specInfo});
+    stages.push_back(
+        {{}, vk::ShaderStageFlagBits::eMeshEXT, meshModule, "main", specInfo});
 
     vk::PipelineRasterizationStateCreateInfo rasterInfo{};
     rasterInfo.rasterizerDiscardEnable = VK_TRUE;
@@ -107,29 +139,17 @@ public:
     return executor;
   }
 
-  /**
-   * Pure BDA variant of direct dispatch.
-   */
-  void __execute_bda(vk::CommandBuffer cmd,
-                     uint32_t x, uint32_t y, uint32_t z,
-                     const TParams &pushConstants) {
-    vk::RenderingInfo renderingInfo{};
-    renderingInfo.renderArea = vk::Rect2D{{0, 0}, {1, 1}};
-    renderingInfo.layerCount = 1;
-
-    cmd.beginRendering(renderingInfo);
-    this->__bind_push_constants(cmd, vk::PipelineBindPoint::eGraphics, pushConstants);
-    cmd.drawMeshTasksEXT(x, y, z);
-    cmd.endRendering();
-  }
-
   void record(uint32_t x, uint32_t y, uint32_t z, const TParams &pushConstants,
               StreamHandle handle = cDefaultStream) {
     Stream *stream = this->ctx->get_stream(handle);
     if (!stream)
       return;
 
-    DirectParams params = {this, pushConstants, x, y, z};
+    uint32_t x_ = (x + taskWgX - 1) / taskWgX;
+    uint32_t y_ = (y + taskWgY - 1) / taskWgY;
+    uint32_t z_ = (z + taskWgZ - 1) / taskWgZ;
+
+    DirectParams params = {this, pushConstants, x_, y_, z_};
     stream->record(_direct_record_cb, &params);
   }
 
@@ -147,6 +167,10 @@ public:
 
 private:
   MeshExecutor() = default;
+  MeshExecutor(uint32_t taskWgX, uint32_t taskWgY, uint32_t taskWgZ,
+               uint32_t meshWgX, uint32_t meshWgY, uint32_t meshWgZ)
+      : taskWgX(taskWgX), taskWgY(taskWgY), taskWgZ(taskWgZ), meshWgX(meshWgX),
+        meshWgY(meshWgY), meshWgZ(meshWgZ) {}
 
   struct DirectParams {
     MeshExecutor<TCode, TParams, TResources> *self;

@@ -1,12 +1,8 @@
 #pragma once
 
 #include "csr.hpp"
-#include "bfs.layout.hpp"
-#include "pictor_core/execution/mesh_executor.hpp"
-#include "pictor_core/execution/compute_executor.hpp"
+#include "bfs.shader.h"
 #include <cstdint>
-#include <vector>
-#include <memory>
 #include <span>
 
 namespace pictor {
@@ -34,9 +30,10 @@ public:
 
 private:
     Context& _ctx;
-    
-    std::unique_ptr<MeshExecutor<bfs_json_layout::Params>> _mesh_exec;
-    std::unique_ptr<ComputeExecutor<bfs_json_layout::Params>> _indirect_exec;
+
+    std::unique_ptr<bfs_shader::BFSExecutor> bfs;
+    std::unique_ptr<bfs_shader::ComputeComputeExecutor> cbfs;
+    using BFSIn = bfs_shader::BFSIn;
     
     AllocationInfo _frontier_a;
     AllocationInfo _frontier_b;

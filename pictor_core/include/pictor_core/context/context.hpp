@@ -25,7 +25,8 @@ public:
   Context &operator=(const Context &) = delete;
 
   StreamHandle create_stream();
-  void flush(StreamHandle handle = cDefaultStream);
+  vk::Result submit(StreamHandle handle = cDefaultStream);
+  vk::Result fsync(StreamHandle handle = cDefaultStream);
   Stream *get_stream(StreamHandle handle);
 
   void wait_idle() const { (void)device.waitIdle(); }
@@ -44,6 +45,8 @@ public:
   void update(const AllocationInfo &dst, size_t offset, size_t size,
               const void *data, StreamHandle stream = cDefaultStream);
 
+  void invalidate(AllocationInfo &alloc);
+  void flush(AllocationInfo &alloc);
   void deallocate(AllocationInfo &alloc);
 
   vk::Instance instance;

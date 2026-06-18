@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
 
         std::cout << "Importing graph: " << graph_file << "..." << std::endl;
         auto import_start = std::chrono::high_resolution_clock::now();
-        auto g = pictor::graphs::Graph::import(ctx, graph_file, true);
+        auto g = pictor::graphs::Graph::import(ctx, graph_file);
         auto import_end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> import_elapsed = import_end - import_start;
         std::cout << "Import took: " << import_elapsed.count() << "s" << std::endl;

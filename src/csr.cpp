@@ -290,7 +290,7 @@ Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize, Grap
   StreamHandle stream = ctx.create_stream();
   ctx.copy(g.h_row_offsets, g.d_row_offsets, stream);
   ctx.copy(g.h_column_indices, g.d_column_indices, stream);
-  ctx.flush(stream);
+  ctx.submit(stream);
   ctx.sync(stream);
 
   return g;

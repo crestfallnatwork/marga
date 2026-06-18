@@ -29,4 +29,6 @@ public:
   constexpr T &operator*() { return this->val(); }
   constexpr T const &operator*() const { return this->val(); }
 };
+
+enum class Result { eErrInvalidHandle = 1 };
 } // namespace pictor
