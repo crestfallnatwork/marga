@@ -116,7 +116,7 @@ void Context::update(const AllocationInfo &dst, size_t offset, size_t size,
   }
 }
 
-void Context::deallocate(AllocationInfo &info) { info.alloc->deallocate(info); }
+void Context::deallocate(AllocationInfo &info) { if(info.alloc) info.alloc->deallocate(info); }
 void Context::invalidate(AllocationInfo &info) { info.alloc->invalidate(info); }
 void Context::flush(AllocationInfo &info) { info.alloc->flush(info); }
 

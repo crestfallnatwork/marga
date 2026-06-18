@@ -37,6 +37,6 @@ struct AllocationInfo {
     } img;
   };
   
-  Allocator *alloc;
+  Allocator *alloc = nullptr;
 };
 } // namespace pictor
