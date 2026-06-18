@@ -24,9 +24,12 @@ uniform BFSIn bfsIn;
 [shader("amplification")]
 [numthreads(WAVE_SIZE, 1, 1)]
 void bfs_task(
-    uint threadId : SV_DispatchThreadID,
+    uint3 gid : SV_GroupID,
     uint lid : SV_GroupIndex
 ) {
+    uint gId = (gid.y*cMaxMeshDim) + gid.x;
+    uint threadId = gId*WAVE_SIZE + lid;
+
     uint v = 0xFFFFFFFF;
     uint current_size = *bfsIn.current_frontier_size;
     if (threadId < current_size) {
@@ -127,7 +130,30 @@ void bfs_mesh(
     SetMeshOutputCounts(0, 0);
 }
 
-/* AI generated vertex based shader sanity check
+struct DispatchIn {
+    uint32_t *frontier_size;
+    uint32_t *grid;
+};
+// @bind(dispatch)
+[[vk::push_constant]]
+uniform DispatchIn dispatchIn;
+[shader("compute")]
+[numthreads(1,1,1)]
+void dispatch() {
+    uint32_t frontier_size = *dispatchIn.frontier_size;
+    uint32_t *grid = dispatchIn.grid;
+    uint32_t task_count = (frontier_size + WAVE_SIZE - 1)/WAVE_SIZE;
+    if(task_count > cMaxMeshDim) {
+        grid[0] = cMaxMeshDim;
+        grid[1] = (task_count + cMaxMeshDim - 1)/cMaxMeshDim;
+    } else {
+        grid[0] = task_count;
+        grid[1] = 1;
+    }
+    grid[2] = 1;
+}
+
+/* Vertex based compute shader. Sanity check
  * that this arch indeed makes sense and is
  * strictly better for sparse power law graphs
  * On RTX 2070:

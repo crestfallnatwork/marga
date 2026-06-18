@@ -34,6 +34,9 @@ private:
     std::unique_ptr<bfs_shader::BFSExecutor> bfs;
     std::unique_ptr<bfs_shader::ComputeComputeExecutor> cbfs;
     using BFSIn = bfs_shader::BFSIn;
+
+    std::unique_ptr<bfs_shader::DispatchComputeExecutor> dispatch;
+    using dispatchIn = bfs_shader::DispatchIn;
     
     AllocationInfo _frontier_a;
     AllocationInfo _frontier_b;

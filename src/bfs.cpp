@@ -23,6 +23,8 @@ std::string load_shader_file(const std::string &path) {
 BFS::BFS(Context &ctx) : _ctx(ctx) {
   bfs.reset(bfs_shader::BFSExecutor::create(ctx).val().release());
   cbfs.reset(bfs_shader::ComputeComputeExecutor::create(ctx).val().release());
+  dispatch.reset(
+      bfs_shader::DispatchComputeExecutor::create(ctx).val().release());
 }
 
 BFS::~BFS() { _cleanup_buffers(); }
@@ -91,6 +93,7 @@ std::pair<std::span<uint32_t>, BFSTimings> BFS::run(Graph &g,
   _ctx.fill(_visited, 0);
   _ctx.fill(_frontier_size_a, 1);
   _ctx.fill(_frontier_size_b, 0);
+  _ctx.fill(_indirect_buffer, 1);
 
   uint32_t one = 1;
   uint32_t zero = 0;
@@ -118,40 +121,61 @@ std::pair<std::span<uint32_t>, BFSTimings> BFS::run(Graph &g,
 
   auto t_traversal_start = std::chrono::high_resolution_clock::now();
 
+  uint32_t batch_size = 10;
+  int current = 0;
+  int next = 1;
   while (next_size != 0) {
-    int current = current_level % 2;
-    int next = (current_level + 1) % 2;
+    for (int i = 0; i < batch_size; i++) {
+      current = current_level % 2;
+      next = (current_level + 1) % 2;
 
-    _ctx.fill(*frontier_sizes[next], 0);
-    _ctx.barrier(*frontier_sizes[next], Access::TransferWrite, Access::Read);
+      dispatch->record(
+          1, 1, 1,
+          {
+              .frontier_size = reinterpret_cast<uint32_t *>(
+                  frontier_sizes[current]->address),
+              .grid = reinterpret_cast<uint32_t *>(_indirect_buffer.address),
+          });
 
-    BFSIn bfsIn = {
-        .current_level = current_level,
-        .row_offsets = reinterpret_cast<uint64_t *>(g.d_row_offsets.address),
-        .column_indices =
-            reinterpret_cast<uint32_t *>(g.d_column_indices.address),
-        .visited = reinterpret_cast<uint32_t *>(_visited.address),
-        .distances = reinterpret_cast<uint32_t *>(_distances.address),
-        .current_frontier =
-            reinterpret_cast<uint32_t *>(frontiers[current]->address),
-        .next_frontier = reinterpret_cast<uint32_t *>(frontiers[next]->address),
-        .current_frontier_size =
-            reinterpret_cast<uint32_t *>(frontier_sizes[current]->address),
-        .next_frontier_size =
-            reinterpret_cast<uint32_t *>(frontier_sizes[next]->address),
-        .num_vertices = g.num_vertices,
-    };
-    bfs->record(next_size, 1, 1, bfsIn);
-    // cbfs->record(next_size, 1, 1, bfsIn); /* vertex variant */
+      _ctx.fill(*frontier_sizes[next], 0);
+      _ctx.barrier(*frontier_sizes[next], Access::TransferWrite, Access::Write);
+      _ctx.barrier(_indirect_buffer, Access::Write, Access::IndirectRead);
 
-    _ctx.barrier(*frontier_sizes[next], Access::Write, Access::TransferRead);
+      BFSIn bfsIn = {
+          .current_level = current_level,
+          .row_offsets = reinterpret_cast<uint64_t *>(g.d_row_offsets.address),
+          .column_indices =
+              reinterpret_cast<uint32_t *>(g.d_column_indices.address),
+          .visited = reinterpret_cast<uint32_t *>(_visited.address),
+          .distances = reinterpret_cast<uint32_t *>(_distances.address),
+          .current_frontier =
+              reinterpret_cast<uint32_t *>(frontiers[current]->address),
+          .next_frontier =
+              reinterpret_cast<uint32_t *>(frontiers[next]->address),
+          .current_frontier_size =
+              reinterpret_cast<uint32_t *>(frontier_sizes[current]->address),
+          .next_frontier_size =
+              reinterpret_cast<uint32_t *>(frontier_sizes[next]->address),
+          .num_vertices = g.num_vertices,
+      };
+      bfs->record_indirect(_indirect_buffer, bfsIn);
+      // bfs->record(next_size, 1, 1, bfsIn);
+      // cbfs->record(next_size, 1, 1, bfsIn); /* vertex variant */
+      _ctx.barrier({
+           ResourceBarrier{frontiers[next], Access::Write, Access::Read},
+           ResourceBarrier{&_visited, Access::Write, Access::Read},
+           ResourceBarrier{frontier_sizes[next], Access::Write,
+                           Access::Read}
+          });
+      current_level++;
+    }
+
     _ctx.copy(*frontier_sizes[next], _staging_size);
-
     _ctx.fsync();
     _ctx.invalidate(_staging_size);
-
     next_size = *reinterpret_cast<uint32_t *>(_staging_size.mappedPtr);
-    current_level++;
+    // std::cout << std::format("Level: {}, Frontier size: {}\n", current_level,
+    // next_size);
   }
 
   auto t_traversal_end = std::chrono::high_resolution_clock::now();
@@ -165,13 +189,13 @@ std::pair<std::span<uint32_t>, BFSTimings> BFS::run(Graph &g,
   _ctx.fsync();
 
   auto t_readback_end = std::chrono::high_resolution_clock::now();
-  t.pci_readback_ms = std::chrono::duration<double, std::milli>(t_readback_end -
-                                                             t_readback_st)
-                       .count();
+  t.pci_readback_ms =
+      std::chrono::duration<double, std::milli>(t_readback_end - t_readback_st)
+          .count();
   auto t_full_end = std::chrono::high_resolution_clock::now();
-  t.total_ms = std::chrono::duration<double, std::milli>(t_full_end -
-                                                             t_full_start)
-                       .count();
+  t.total_ms =
+      std::chrono::duration<double, std::milli>(t_full_end - t_full_start)
+          .count();
 
   return {std::span<uint32_t>(static_cast<uint32_t *>(_h_distances.mappedPtr),
                               g.num_vertices),
