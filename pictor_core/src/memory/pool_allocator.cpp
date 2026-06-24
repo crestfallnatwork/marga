@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Author: Himanshu Gupta <himanshu3@iisc.ac.in> */
+
 #include "pictor_core/memory/pool_allocator.hpp"
 #include "pictor_core/context/context.hpp"
 
