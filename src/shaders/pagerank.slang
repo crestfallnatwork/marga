@@ -1,61 +1,4 @@
-struct ReductionFlag{
-    uint32_t padding[31];
-    uint32_t flag;
-}
-[[vk::push_constant]]
-uniform ReductionFlag _dummy_reduction_flag; /*dummy push constant for reflection support*/
-
-struct ReductionIn {
-    float32_t *past_pr;
-    float32_t *current_pr;
-    ReductionFlag *flag;
-    float32_t delta;
-    uint64_t vertices_n;
-    float32_t d;
-}
-// @bind(reduce)
-[[vk::push_constant]]
-uniform ReductionIn reduceIn;
-[shader("compute")]
-[numthreads(256, 1, 1)]
-void reduce(uint32_t threadId : SV_DispatchThreadID) {
-    if(threadId >= reduceIn.vertices_n) return;
-
-    float cur_pr = reduceIn.current_pr[threadId];
-    cur_pr = (1 - reduceIn.d)/reduceIn.vertices_n +
-              reduceIn.d*cur_pr;
-
-    float32_t delta = abs(reduceIn.past_pr[threadId] - cur_pr);
-
-    reduceIn.current_pr[threadId] = cur_pr;
-    reduceIn.past_pr[threadId] = 0;
-
-    if(delta > reduceIn.delta && (reduceIn.flag->flag == false)) {
-        /* Yes indeed! This is a race but the gods are good.
-         * This is the good type, the fun type. The type
-         * that only hurts atomic contention and nothing else
-         */
-        reduceIn.flag->flag = true;
-    }
-}
-
-struct DispatchIn {
-    uint64_t edges_n;
-    ReductionFlag *flag;
-    uint *grid;
-}
-// @bind(dispatch)
-[[vk::push_constant]]
-uniform DispatchIn dispatchIn;
-[shader("compute")]
-[numthreads(1, 1, 1)]
-void dispatch() {
-    dispatchIn.grid[0] = (dispatchIn.flag->flag == true) ?
-        (dispatchIn.edges_n + 255)/256 : 0;
-    dispatchIn.grid[1] = 1;
-    dispatchIn.grid[2] = 1;
-    dispatchIn.flag->flag = false;
-}
+static const uint cMaxMeshDim = 65535;
 
 struct PageRankIn{
     uint64_t* row_offsets;
@@ -93,68 +36,13 @@ void page_rank(uint32_t threadId: SV_DispatchThreadID) {
     InterlockedAdd(pageRankIn.current_pr[pageRankIn.column_indices[threadId]], to_push);
 }
 
-/* CSC and vertex pull compute shader */
-
-struct OutDegreeIn {
-    uint64_t* row_offsets;
-    uint32_t* column_indices;
-    uint32_t* out_degrees;
-    uint32_t vertices_n;
-}
-
-// @bind(outdegree)
-[[vk::push_constant]]
-uniform OutDegreeIn outDegreeIn;
-[shader("compute")]
-[numthreads(256,1,1)]
-void outdegree(uint32_t threadId: SV_DispatchThreadID) {
-    if(threadId >= outDegreeIn.vertices_n) {
-        return;
-    }
-    uint32_t degree = outDegreeIn.row_offsets[threadId+1] - outDegreeIn.row_offsets[threadId];
-    uint32_t *start_col = outDegreeIn.column_indices + outDegreeIn.row_offsets[threadId];
-    for(uint32_t i = 0; i < degree; i++) {
-        uint32_t src = *(start_col + i);
-        InterlockedAdd(outDegreeIn.out_degrees[src], 1);
-    }
-}
-
-struct PageRankCSCIn{
-    uint64_t* row_offsets;
-    uint32_t* column_indices;
-    float32_t *current_pr;
-    float32_t *past_pr;
-    uint32_t* out_degrees;
-    uint64_t vertices_n;
-    uint64_t edges_n;
-};
-// @bind(cscPageRank)
-[[vk::push_constant]]
-uniform PageRankCSCIn vprIn;
-[shader("compute")]
-[numthreads(256,1,1)]
-void cscPageRank(uint32_t threadId: SV_DispatchThreadID) {
-    if (threadId >= vprIn.vertices_n)
-        return;
-    float32_t acc = 0.f;
-    uint32_t degree = vprIn.row_offsets[threadId+1] - vprIn.row_offsets[threadId];
-    uint32_t *start_col = vprIn.column_indices + vprIn.row_offsets[threadId];
-    for(uint32_t i = 0; i < degree; i++) {
-        uint32_t src = *(start_col + i);
-        float32_t src_pull = vprIn.past_pr[src]/vprIn.out_degrees[src];
-        acc += (src_pull);
-    }
-    vprIn.current_pr[threadId] = acc;
-}
-
 /* mesh shader */
 
 #define meshWorkGroupSize WAVE_SIZE
 
 struct SharedPRPayload {
-    uint vertex_ids[32];
-    uint edge_offsets[32+1];
-    uint total_edges;
+    uint v_start;
+    uint v_end;
 };
 groupshared SharedPRPayload sharedPRPayload;
 
@@ -162,36 +50,30 @@ groupshared SharedPRPayload sharedPRPayload;
 [[vk::push_constant]]
 uniform PageRankIn prIn;
 [shader("amplification")]
-[numthreads(WAVE_SIZE, 1, 1)]
+[numthreads(1, 1, 1)]
 void pr_task(
     uint threadId : SV_DispatchThreadID,
     uint lid : SV_GroupIndex,
 ) {
-    uint v = threadId;
-    uint degree = 0;
-    if (threadId < prIn.vertices_n) {
-        degree = uint(prIn.row_offsets[v + 1] - prIn.row_offsets[v]);
-    }
 
-    uint wave_offset = WavePrefixSum(degree);
+    uint32_t v_start = threadId * 32;
+    uint32_t v_end = (threadId + 1) * 32;
+    if(v_end > prIn.vertices_n) v_end = prIn.vertices_n;
 
-    sharedPRPayload.vertex_ids[lid] = v;
-    sharedPRPayload.edge_offsets[lid] = wave_offset;
+    uint32_t total_edges = prIn.row_offsets[v_end] - prIn.row_offsets[v_start];
 
-    if (lid == WaveGetLaneCount() - 1) {
-        uint wave_total = wave_offset + degree;
-        sharedPRPayload.edge_offsets[32] = wave_total;
-        sharedPRPayload.total_edges = wave_total;
-    }
+    sharedPRPayload.v_start = v_start;
+    sharedPRPayload.v_end = v_end;
 
-    GroupMemoryBarrierWithGroupSync();
-
-    uint mesh_count = (sharedPRPayload.total_edges + meshWorkGroupSize - 1) / meshWorkGroupSize;
-    DispatchMesh(mesh_count, 1, 1, sharedPRPayload);
+    uint mesh_count = (total_edges + WAVE_SIZE - 1) / WAVE_SIZE;
+    uint mesh_x = mesh_count > cMaxMeshDim ? cMaxMeshDim : mesh_count;
+    uint mesh_y = mesh_count > cMaxMeshDim ?
+                  ((mesh_count + cMaxMeshDim - 1) / cMaxMeshDim): 1;
+    DispatchMesh(mesh_x, mesh_y, 1, sharedPRPayload);
 }
 
 [shader("mesh")]
-[numthreads(WAVE_SIZE, 1, 1)]
+[numthreads(32, 1, 1)]
 [outputtopology("point")]
 void pr_mesh(
     uint threadId : SV_DispatchThreadID,
@@ -201,28 +83,33 @@ void pr_mesh(
     out vertices float4 vertices[1],
     out indices uint indices[1]
 ) {
-    uint src = 0;
-    uint local_offset = gid.x * meshWorkGroupSize + lid;
-    if(local_offset >= inPayload.total_edges) {
+    uint gid_flat = gid.y * cMaxMeshDim + gid.x;
+    uint local_offset = gid_flat * meshWorkGroupSize + lid;
+
+    uint32_t v_start = inPayload.v_start;
+    uint32_t v_end = inPayload.v_end;
+
+    uint32_t total_edges = prIn.row_offsets[v_end] - prIn.row_offsets[v_start];
+    if(local_offset >= total_edges) {
         SetMeshOutputCounts(0, 0);
         return;
     }
 
+    uint32_t src = v_start;
+    uint64_t edge_offset = local_offset + prIn.row_offsets[src];
     /* evil binary search */
     [unroll]
     for (uint step = (32 >> 1); step > 0; step >>= 1) {
-        if (inPayload.edge_offsets[src + step] <= local_offset) {
+        if (prIn.row_offsets[src + step] <= edge_offset) {
             src += step;
         }
     }
-    uint edge_offset = local_offset - inPayload.edge_offsets[src];
-    src = inPayload.vertex_ids[src];
-    uint dst = prIn.row_offsets[src] + edge_offset;
+    uint dst = *(prIn.column_indices + edge_offset);
 
     uint out_degree = prIn.row_offsets[src+1] - prIn.row_offsets[src];
     float to_push = prIn.past_pr[src]/out_degree;
-    uint32_t* dst_addr = prIn.column_indices + dst;
-    InterlockedAdd(prIn.current_pr[*dst_addr], to_push);
+    InterlockedAdd(prIn.current_pr[dst], to_push);
 
     SetMeshOutputCounts(0, 0);
 }
+

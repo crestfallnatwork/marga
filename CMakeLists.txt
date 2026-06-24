@@ -34,8 +34,9 @@ add_library(pictor_graphs_bfs src/bfs.cpp src/bfs_validation.cpp )
 target_link_libraries(pictor_graphs_bfs bfs_shader)
 
 pictor_add_shader(pr_shader src/shaders/pagerank.slang)
+pictor_add_shader(prc_shader src/shaders/pr.slang)
 add_library(pictor_graphs_pr src/pagerank.cpp)
-target_link_libraries(pictor_graphs_pr pr_shader)
+target_link_libraries(pictor_graphs_pr pr_shader prc_shader)
 
 add_executable(bfs src/bfs_main.cpp)
 target_link_libraries(bfs pictor_graphs pictor_core pictor_graphs_bfs)

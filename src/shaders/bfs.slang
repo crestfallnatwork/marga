@@ -42,19 +42,19 @@ void bfs_task(
     }
 
     uint wave_offset = WavePrefixSum(degree);
-    uint wave_total = WaveActiveSum(degree);
 
     sharedBFSPayload.vertex_ids[lid] = v;
     sharedBFSPayload.edge_offsets[lid] = wave_offset;
     
     if (lid == WAVE_SIZE - 1) {
+        uint wave_total = wave_offset + degree;
         sharedBFSPayload.edge_offsets[WAVE_SIZE] = wave_offset + degree;
         sharedBFSPayload.total_edges = wave_total;
     }
 
     GroupMemoryBarrierWithGroupSync();
-    uint mesh_count = (sharedBFSPayload.total_edges + 127) / 128;
 
+    uint mesh_count = (sharedBFSPayload.total_edges + 127) / 128;
     uint mesh_x = mesh_count > cMaxMeshDim ? cMaxMeshDim : mesh_count;
     uint mesh_y = mesh_count > cMaxMeshDim ?
                   ((mesh_count + cMaxMeshDim - 1) / cMaxMeshDim): 1;
@@ -153,7 +153,7 @@ void dispatch() {
     grid[2] = 1;
 }
 
-/* Vertex based compute shader. Sanity check
+/* Vertex based compute shader(AI gen'ed). Sanity check
  * that this arch indeed makes sense and is
  * strictly better for sparse power law graphs
  * On RTX 2070:

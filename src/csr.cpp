@@ -2,6 +2,8 @@
 
 #include "csr.hpp"
 
+#include <iostream>
+
 #include "pictor_core/context/context.hpp"
 
 #include <algorithm>
@@ -282,14 +284,23 @@ Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize, Grap
     t.join();
 
   // Upload to device
+  //
+  uint64_t row_offset_n = (g.num_vertices + 1);
+  uint64_t row_offset_n_padded = ((row_offset_n +31)/32)*32;
   g.d_row_offsets =
-      ctx.pool_allocator->allocate(g.h_row_offsets.size, alignof(uint64_t));
+      ctx.pool_allocator->allocate(row_offset_n_padded*sizeof(uint64_t), alignof(uint64_t));
   g.d_column_indices =
       ctx.pool_allocator->allocate(g.h_column_indices.size, alignof(uint32_t));
 
   StreamHandle stream = ctx.create_stream();
   ctx.copy(g.h_row_offsets, g.d_row_offsets, stream);
   ctx.copy(g.h_column_indices, g.d_column_indices, stream);
+
+  uint64_t toFill = (row_offset_n_padded - row_offset_n)*sizeof(uint64_t);
+  if(toFill > 0) {
+    ctx.fill(g.d_row_offsets, row_offset_n*sizeof(uint64_t),
+            toFill, std::numeric_limits<uint32_t>::max(), stream);
+  }
   ctx.submit(stream);
   ctx.sync(stream);
 

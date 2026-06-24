@@ -4,6 +4,7 @@
 #include "pictor_core/context/context.hpp"
 
 #include "pagerank.shader.h"
+#include "pr.shader.h"
 
 #include <vector>
 
@@ -29,21 +30,25 @@ public:
 private:
   Context &_ctx;
 
-  std::unique_ptr<pagerank_shader::ReduceComputeExecutor> reduction;
-  using ReductionFlag = pagerank_shader::ReductionFlag;
-  using ReductionIn = pagerank_shader::ReductionIn;
+  std::unique_ptr<pr_shader::ReduceComputeExecutor> reduction;
+  using ReductionFlag = pr_shader::ReductionFlag;
+  using ReductionIn = pr_shader::ReductionIn;
 
   std::unique_ptr<pagerank_shader::PageComputeExecutor> pagerankCompute;
   std::unique_ptr<pagerank_shader::PRExecutor> pagerank;
   using PageRankIn = pagerank_shader::PageRankIn;
 
-  using PagerankCSCExecutor = pagerank_shader::CscpagerankComputeExecutor;
-  std::unique_ptr<PagerankCSCExecutor> cscpr;
-  using PageRankCSCIn = pagerank_shader::PageRankCSCIn;
+  using PagerankCSCExecutor = pr_shader::PRCExecutor;
+  std::unique_ptr<PagerankCSCExecutor> prc;
+  using PRCIn = pr_shader::PageRankCSCIn;
 
-  using OutDegreeExecutor = pagerank_shader::OutdegreeComputeExecutor;
+  using OutDegreeExecutor = pr_shader::OutdegreeComputeExecutor;
   std::unique_ptr<OutDegreeExecutor> outdegree;
-  using OutDegreeIn = pagerank_shader::OutDegreeIn;
+  using OutDegreeIn = pr_shader::OutDegreeIn;
+
+  using DispatchExecutor = pr_shader::DispatchComputeExecutor;
+  std::unique_ptr<DispatchExecutor> dispatch;
+  using DispatchIn = pr_shader::DispatchIn;
 
 
   AllocationInfo not_done_flag;
@@ -51,6 +56,9 @@ private:
   AllocationInfo current_pr;
   AllocationInfo out_degree;
   AllocationInfo _h_pr_results;
+  AllocationInfo h_not_done;
+  AllocationInfo indirect_mesh_grid;
+  AllocationInfo indirect_reduce_grid;
 
   void _allocate_buffers(uint64_t num_vertices, uint64_t num_edges);
   void _cleanup_buffers();
