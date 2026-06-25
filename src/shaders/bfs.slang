@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Author: Himanshu Gupta <himanshu3@iisc.ac.in>
+
 struct SharedBFSPayload {
     uint vertex_ids[WAVE_SIZE];
     uint edge_offsets[WAVE_SIZE+1];

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Author: Himanshu Gupta <himanshu3@iisc.ac.in>
+
 cmake_minimum_required(VERSION 3.20)
 project(pictor_graphs)
 

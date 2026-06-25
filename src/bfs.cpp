@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Author: Himanshu Gupta <himanshu3@iisc.ac.in>
+
 #include "bfs.hpp"
 #include "pictor_core/context/context.hpp"
 #include "pictor_core/execution/synchronization.hpp"

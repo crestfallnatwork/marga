@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Author: Himanshu Gupta <himanshu3@iisc.ac.in>
+
 // Shader for dynamically calculating out-degrees from a CSC graph
 
 struct Params {

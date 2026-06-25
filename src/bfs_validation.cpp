@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Author: Himanshu Gupta <himanshu3@iisc.ac.in>
+
 /*
  * Adapted from GAP Benchmark Suite (Scott Beamer)
  * Adapted by Gemini CLI

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Author: Himanshu Gupta <himanshu3@iisc.ac.in>
+
 #include "pagerank.hpp"
 #include "pictor_core/context/context.hpp"
 
