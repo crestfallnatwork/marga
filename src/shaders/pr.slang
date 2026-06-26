@@ -3,18 +3,15 @@
 
 static const uint cMaxMeshDim = 65535;
 
-struct ReductionFlag{
-    uint32_t iterations;
-    uint32_t padding[30];
-    uint32_t flag;
+struct SharedReductionTile {
+    float32_t halves[1024/WAVE_SIZE];
 }
-[[vk::push_constant]]
-uniform ReductionFlag _dummy_reduction_flag; /*dummy push constant for reflection support*/
+groupshared SharedReductionTile reductionTile;
 
 struct ReductionIn {
     float32_t *past_pr;
     float32_t *current_pr;
-    ReductionFlag *flag;
+    float32_t* d_delta;
     float32_t delta;
     uint64_t vertices_n;
     float32_t d;
@@ -23,25 +20,41 @@ struct ReductionIn {
 [[vk::push_constant]]
 uniform ReductionIn reduceIn;
 [shader("compute")]
-[numthreads(256, 1, 1)]
-void reduce(uint32_t threadId : SV_DispatchThreadID) {
-    if(threadId >= reduceIn.vertices_n) return;
+[numthreads(1024, 1, 1)]
+void reduce(uint32_t threadId : SV_DispatchThreadID,
+            uint lid : SV_GroupIndex,
+            uint gid : SV_GroupID,
+) {
+    float delta = 0.;
+    if(threadId < reduceIn.vertices_n)  {
+        float cur_pr = reduceIn.current_pr[threadId];
+        cur_pr = (1 - reduceIn.d)/reduceIn.vertices_n +
+                reduceIn.d*cur_pr;
 
-    float cur_pr = reduceIn.current_pr[threadId];
-    cur_pr = (1 - reduceIn.d)/reduceIn.vertices_n +
-              reduceIn.d*cur_pr;
+        delta = abs(reduceIn.past_pr[threadId] - cur_pr);
 
-    float32_t delta = abs(reduceIn.past_pr[threadId] - cur_pr);
+        reduceIn.current_pr[threadId] = cur_pr;
+        reduceIn.past_pr[threadId] = 0;
 
-    reduceIn.current_pr[threadId] = cur_pr;
-    reduceIn.past_pr[threadId] = 0;
+    }
 
-    if(delta > reduceIn.delta && (reduceIn.flag->flag == false)) {
-        /* Yes indeed! This is a race but the gods are good.
-         * This is the good type, the fun type. The type
-         * that only hurts atomic contention and nothing else
-         */
-        reduceIn.flag->flag = true;
+    uint sgid = WaveGetWaveIndex();
+    delta = WaveActiveSum(delta);
+    if(WaveIsFirstLane()) {
+       reductionTile.halves[sgid] = delta;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    if(sgid == 0) {
+        float32_t halve = 0;
+        if(lid < 1024/WaveGetLaneCount()) {
+            halve = reductionTile.halves[lid];
+        }
+        delta = WaveActiveSum(halve);
+        if(WaveIsFirstLane()) {
+            InterlockedAdd(*reduceIn->d_delta, delta);
+        }
     }
 }
 
@@ -172,10 +185,12 @@ void outdegree(uint32_t threadId: SV_DispatchThreadID) {
 }
 
 struct DispatchIn {
-    ReductionFlag *flag;
+    float32_t* d_delta;
+    uint* iterations;
     uint* mesh_grid;
     uint* reduce_grid;
     uint vertices_n;
+    float32_t delta;
 }
 // @bind(dispatch)
 [[vk::push_constant]]
@@ -185,10 +200,11 @@ uniform DispatchIn dispatchIn;
 void dispatch() {
     uint* mesh_grid = dispatchIn.mesh_grid;
     uint* reduce_grid = dispatchIn.reduce_grid;
-    if(dispatchIn.flag->flag) {
-        dispatchIn.flag->iterations++;
+    if(*dispatchIn->d_delta > dispatchIn->delta) {
+        *dispatchIn->d_delta = 0.;
+        *dispatchIn->iterations = *(dispatchIn->iterations) + 1;
         mesh_grid[0] = ((dispatchIn.vertices_n + 63)/64);
-        reduce_grid[0] = ((dispatchIn.vertices_n + 255)/256);
+        reduce_grid[0] = ((dispatchIn.vertices_n + 1023)/1024);
     } else {
         mesh_grid[0] = 0;
         reduce_grid[0] = 0;
@@ -198,5 +214,4 @@ void dispatch() {
     reduce_grid[1] = 1;
     mesh_grid[2] = 1;
     reduce_grid[2] = 1;
-    dispatchIn.flag->flag = false;
 }

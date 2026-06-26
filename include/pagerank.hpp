@@ -34,7 +34,6 @@ private:
   Context &_ctx;
 
   std::unique_ptr<pr_shader::ReduceComputeExecutor> reduction;
-  using ReductionFlag = pr_shader::ReductionFlag;
   using ReductionIn = pr_shader::ReductionIn;
 
   std::unique_ptr<pagerank_shader::PageComputeExecutor> pagerankCompute;
@@ -54,12 +53,12 @@ private:
   using DispatchIn = pr_shader::DispatchIn;
 
 
-  AllocationInfo not_done_flag;
   AllocationInfo past_pr;
   AllocationInfo current_pr;
   AllocationInfo out_degree;
   AllocationInfo _h_pr_results;
-  AllocationInfo h_not_done;
+  AllocationInfo _d_delta;
+  AllocationInfo _iterations;
   AllocationInfo indirect_mesh_grid;
   AllocationInfo indirect_reduce_grid;
 

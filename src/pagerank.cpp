@@ -24,33 +24,36 @@ PageRank::PageRank(Context &ctx) : _ctx(ctx) {
 PageRank::~PageRank() { _cleanup_buffers(); }
 
 void PageRank::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges) {
-  not_done_flag = _ctx.pool_allocator->allocate(sizeof(ReductionFlag), 0);
   past_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices, 0);
   current_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices, 0);
   _h_pr_results =
       _ctx.pinned_allocator->allocate(sizeof(float) * num_vertices, 0);
   indirect_mesh_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0);
   indirect_reduce_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0);
-  h_not_done = _ctx.pinned_allocator->allocate(sizeof(ReductionFlag), 0);
+  _d_delta = _ctx.pool_allocator->allocate(sizeof(float), 0);
+  _iterations = _ctx.pool_allocator->allocate(sizeof(uint32_t), 0);
 
   float init_pr = 1. / num_vertices;
   uint32_t punned_pr;
   std::memcpy(&punned_pr, &init_pr, sizeof(float));
   _ctx.fill(past_pr, punned_pr);
   _ctx.fill(current_pr, 0);
-  _ctx.fill(not_done_flag, 0);
-  _ctx.fill(not_done_flag, sizeof(ReductionFlag) - sizeof(uint32_t), sizeof(uint32_t), 1);
+  uint32_t punned;
+  float one = 1.;
+  std::memcpy(&punned, &one, sizeof(float));
+  _ctx.fill(_d_delta, punned);
+  _ctx.fill(_iterations, 0);
 }
 
 void PageRank::_cleanup_buffers() {
-  _ctx.deallocate(not_done_flag);
   _ctx.deallocate(past_pr);
   _ctx.deallocate(current_pr);
   _ctx.deallocate(_h_pr_results);
   _ctx.deallocate(out_degree);
   _ctx.deallocate(indirect_mesh_grid);
   _ctx.deallocate(indirect_reduce_grid);
-  _ctx.deallocate(h_not_done);
+  _ctx.deallocate(_d_delta);
+  _ctx.deallocate(_iterations);
 }
 
 std::pair<std::vector<float>, PageRankTimings>
@@ -84,30 +87,31 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
   }
 
   auto times = 0.ms;
-  uint64_t iterations = 0;
-  volatile ReductionFlag *not_done =
-      reinterpret_cast<ReductionFlag *>(h_not_done.mappedPtr);
   auto curr = &current_pr;
   auto past = &past_pr;
 
-  uint batchSize = 10;
+  uint batchSize = 30;
+
+  volatile float* h_delta = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
 
   auto t1 = std::chrono::high_resolution_clock::now();
   do {
     for (uint32_t i = 0; i < batchSize; i++) {
+      _ctx.barrier(_iterations, Access::Write, Access::Write);
       dispatch->record(
           1, 1, 1,
           {
-              .flag = reinterpret_cast<ReductionFlag *>(not_done_flag.address),
+              .d_delta = reinterpret_cast<float*>(_d_delta.address),
+              .iterations = reinterpret_cast<uint32_t*>(_iterations.address),
               .mesh_grid =
                   reinterpret_cast<uint32_t *>(indirect_mesh_grid.address),
               .reduce_grid =
                   reinterpret_cast<uint32_t *>(indirect_reduce_grid.address),
               .vertices_n = static_cast<uint32_t>(G.num_vertices),
+              .delta = delta,
           });
 
       _ctx.barrier(indirect_mesh_grid, Access::Write, Access::IndirectRead); 
-      _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
 
       _ctx.barrier(*past, Access::Write, Access::Read);
       _ctx.barrier(*curr, Access::Write, Access::Write);
@@ -127,32 +131,37 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
           });
 
       _ctx.barrier(*curr, Access::Write, Access::Read);
-      _ctx.barrier(not_done_flag, Access::Write, Access::Read);
-      _ctx.barrier(not_done_flag, Access::Write, Access::Write);
+      _ctx.barrier(_d_delta, Access::Write, Access::Write);
+      _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
 
       ReductionIn reductionIn = {
           .past_pr = reinterpret_cast<float *>(past->address),
           .current_pr = reinterpret_cast<float *>(curr->address),
-          .flag = reinterpret_cast<ReductionFlag *>(not_done_flag.address),
+          .d_delta = reinterpret_cast<float*>(_d_delta.address),
           .delta = delta,
           .vertices_n = G.num_vertices,
           .d = 0.85};
       reduction->record_indirect(indirect_reduce_grid, reductionIn);
 
-      _ctx.barrier(not_done_flag, Access::Write, Access::Read);
+      _ctx.barrier(_d_delta, Access::Write, Access::Read);
 
       std::swap(curr, past);
     }
-    _ctx.barrier(not_done_flag, Access::Write, Access::TransferRead);
-    _ctx.copy(not_done_flag, h_not_done);
+    _ctx.barrier(_d_delta, Access::Write, Access::TransferRead);
+    _ctx.copy(_d_delta, _h_pr_results);
     _ctx.fsync();
 
-    _ctx.invalidate(h_not_done);
-    iterations++;
-  } while (not_done->flag);
+    _ctx.invalidate(_h_pr_results);
+  } while (*h_delta > delta);
   auto t2 = std::chrono::high_resolution_clock::now();
+
+  _ctx.copy(_iterations, _h_pr_results);
+  _ctx.fsync();
+  _ctx.invalidate(_h_pr_results);
+  volatile auto h_iterations = reinterpret_cast<uint32_t*>(_h_pr_results.mappedPtr);
+  auto iterations = *h_iterations;
+
   times = t2 - t1;
-  iterations = (not_done->iterations != 0) ? not_done->iterations : iterations;
   std::cout << std::format("\nIterations approx: {}, Time: {}, Time/Iteration(approx): {}",
                            iterations, times, times/iterations)
             << std::endl;
