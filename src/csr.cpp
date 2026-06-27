@@ -29,11 +29,11 @@
  */
 
 #include "csr.hpp"
-
-#include <iostream>
+#include "helper.hpp"
 
 #include "pictor_core/context/context.hpp"
 
+#include <iostream>
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -314,11 +314,11 @@ Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize, Grap
   // Upload to device
   //
   uint64_t row_offset_n = (g.num_vertices + 1);
-  uint64_t row_offset_n_padded = ((row_offset_n +31)/32)*32;
-  g.d_row_offsets =
-      ctx.pool_allocator->allocate(row_offset_n_padded*sizeof(uint64_t), alignof(uint64_t));
-  g.d_column_indices =
-      ctx.pool_allocator->allocate(g.h_column_indices.size, alignof(uint32_t));
+  uint64_t row_offset_n_padded = row_offset_n;
+  CheckAllocation(g.d_row_offsets =
+      ctx.pool_allocator->allocate(row_offset_n_padded*sizeof(uint64_t), alignof(uint64_t)));
+  CheckAllocation(g.d_column_indices =
+      ctx.pool_allocator->allocate(g.h_column_indices.size, alignof(uint32_t)));
 
   StreamHandle stream = ctx.create_stream();
   ctx.copy(g.h_row_offsets, g.d_row_offsets, stream);
