@@ -2,14 +2,14 @@
 // Author: Himanshu Gupta <himanshu3@iisc.ac.in>
 
 /*
- * Calculate page rank on the gpu using mesh shaders
- * Page rank is an iterative 
+ * 
  */
 
 static const uint cMaxMeshDim = 65535;
 
 struct SharedReductionTile {
-    float32_t halves[1024/WAVE_SIZE];
+    float32_t partial_errors[1024/WAVE_SIZE];
+    float32_t partial_dangling[1024/WAVE_SIZE];
 }
 groupshared SharedReductionTile reductionTile;
 
@@ -18,8 +18,8 @@ struct ReductionIn {
     float32_t *current_pr;
     float32_t* d_delta;
     float32_t delta;
-    uint64_t vertices_n;
     float32_t d;
+    uint64_t vertices_n;
 }
 // @bind(reduce)
 [[vk::push_constant]]
@@ -47,20 +47,19 @@ void reduce(uint32_t threadId : SV_DispatchThreadID,
     uint sgid = WaveGetWaveIndex();
     delta = WaveActiveSum(delta);
     if(WaveIsFirstLane()) {
-       reductionTile.halves[sgid] = delta;
+       reductionTile.partial_errors[sgid] = delta;
     }
 
     GroupMemoryBarrierWithGroupSync();
 
     if(sgid == 0) {
-        float32_t halve = 0;
+        float32_t parital_error = 0;
         if(lid < 1024/WaveGetLaneCount()) {
-            halve = reductionTile.halves[lid];
+            parital_error = reductionTile.partial_errors[lid];
         }
-        delta = WaveActiveSum(halve);
+        delta = WaveActiveSum(parital_error);
         if(WaveIsFirstLane()) {
             InterlockedAdd(*reduceIn->d_delta, delta);
-            reduceIn.past_pr[reduceIn.vertices_n] = 0;
         }
     }
 }
@@ -160,14 +159,34 @@ void prc_mesh(
 
     bool write = (dst_next != dst);
     if(write) {
-        /* dangling */
-        if(prIn.out_degrees[dst] == 0) {
-            InterlockedAdd(prIn.curr_pr[prIn.vertices_n], pull);
-        }
         InterlockedAdd(prIn.curr_pr[dst], pull);
     }
 
     SetMeshOutputCounts(0, 0);
+}
+
+struct DanglingIn{
+    float32_t* past_pr;
+    float32_t* curr_pr;
+    uint* out_degree;
+    uint64_t vertices_n;
+}
+
+/* handle nodes with zero degree - in or out*/
+// @bind(dangling)
+[[vk::push_constant]]
+uniform DanglingIn danglingIn;
+[shader("compute")]
+[numthreads(1024,1,1)]
+void dangling(uint threadId : SV_DispatchThreadID) {
+    if(threadId >= danglingIn.vertices_n) {
+        return;
+    }
+    uint outgoing = danglingIn.out_degree[threadId];
+    if(outgoing == 0) {
+        InterlockedAdd(danglingIn.curr_pr[danglingIn.vertices_n],
+                    danglingIn.past_pr[threadId]);
+    }
 }
 
 
@@ -182,7 +201,7 @@ struct OutDegreeIn {
 [[vk::push_constant]]
 uniform OutDegreeIn outDegreeIn;
 [shader("compute")]
-[numthreads(256,1,1)]
+[numthreads(64,1,1)]
 void outdegree(uint32_t threadId: SV_DispatchThreadID) {
     if(threadId >= outDegreeIn.vertices_n) {
         return;
@@ -197,6 +216,7 @@ void outdegree(uint32_t threadId: SV_DispatchThreadID) {
 
 struct DispatchIn {
     float32_t* d_delta;
+    float32_t* curr_pr;
     uint* iterations;
     uint* mesh_grid;
     uint* reduce_grid;
@@ -214,6 +234,7 @@ void dispatch() {
     if(*dispatchIn->d_delta > dispatchIn->delta) {
         *dispatchIn->d_delta = 0.;
         *dispatchIn->iterations = *(dispatchIn->iterations) + 1;
+        dispatchIn.curr_pr[dispatchIn.vertices_n] = 0.;
         mesh_grid[0] = ((dispatchIn.vertices_n + 63)/64);
         reduce_grid[0] = ((dispatchIn.vertices_n + 1023)/1024);
     } else {

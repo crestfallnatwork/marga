@@ -48,6 +48,10 @@ private:
   std::unique_ptr<OutDegreeExecutor> outdegree;
   using OutDegreeIn = pr_shader::OutDegreeIn;
 
+  using DanglingHandler = pr_shader::DanglingComputeExecutor;
+  std::unique_ptr<DanglingHandler> danglingHandler;
+  using DanglingHandlerIn = pr_shader::DanglingIn;
+
   using DispatchExecutor = pr_shader::DispatchComputeExecutor;
   std::unique_ptr<DispatchExecutor> dispatch;
   using DispatchIn = pr_shader::DispatchIn;

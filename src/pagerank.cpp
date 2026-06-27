@@ -2,10 +2,13 @@
 // Author: Himanshu Gupta <himanshu3@iisc.ac.in>
 
 #include "pagerank.hpp"
+#include "helper.hpp"
+
 #include "pictor_core/context/context.hpp"
 
 #include <chrono>
 #include <cstdint>
+
 
 namespace pictor {
 namespace graphs {
@@ -19,19 +22,25 @@ PageRank::PageRank(Context &ctx) : _ctx(ctx) {
   prc.reset(PagerankCSCExecutor::create(_ctx).val().release());
   outdegree.reset(OutDegreeExecutor::create(_ctx).val().release());
   dispatch.reset(DispatchExecutor::create(_ctx).val().release());
+  danglingHandler.reset(DanglingHandler::create(_ctx).val().release());
 }
 
 PageRank::~PageRank() { _cleanup_buffers(); }
 
 void PageRank::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges) {
-  past_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices + 1, 0);
-  current_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices + 1, 0);
-  _h_pr_results =
-      _ctx.pinned_allocator->allocate(sizeof(float) * num_vertices, 0);
-  indirect_mesh_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0);
-  indirect_reduce_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0);
-  _d_delta = _ctx.pool_allocator->allocate(sizeof(float), 0);
-  _iterations = _ctx.pool_allocator->allocate(sizeof(uint32_t), 0);
+  CheckAllocation(past_pr = _ctx.pool_allocator->allocate(
+                      sizeof(float) * (num_vertices + 1), 0));
+  CheckAllocation(current_pr = _ctx.pool_allocator->allocate(
+                      sizeof(float) * (num_vertices + 1), 0));
+  CheckAllocation(_h_pr_results = _ctx.pinned_allocator->allocate(
+                      sizeof(float) * num_vertices, 0));
+  CheckAllocation(indirect_mesh_grid =
+                      _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
+  CheckAllocation(indirect_reduce_grid =
+                      _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
+  CheckAllocation(_d_delta = _ctx.pool_allocator->allocate(sizeof(float), 0));
+  CheckAllocation(_iterations =
+                      _ctx.pool_allocator->allocate(sizeof(uint32_t), 0));
 
   float init_pr = 1. / num_vertices;
   uint32_t punned_pr;
@@ -92,17 +101,19 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
 
   uint batchSize = 30;
 
-  volatile float* h_delta = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
+  volatile float *h_delta = reinterpret_cast<float *>(_h_pr_results.mappedPtr);
 
   auto t1 = std::chrono::high_resolution_clock::now();
   do {
     for (uint32_t i = 0; i < batchSize; i++) {
       _ctx.barrier(_iterations, Access::Write, Access::Write);
+      _ctx.barrier(*curr, Access::Write, Access::Write);
       dispatch->record(
           1, 1, 1,
           {
-              .d_delta = reinterpret_cast<float*>(_d_delta.address),
-              .iterations = reinterpret_cast<uint32_t*>(_iterations.address),
+              .d_delta = reinterpret_cast<float *>(_d_delta.address),
+              .curr_pr = reinterpret_cast<float *>(curr->address),
+              .iterations = reinterpret_cast<uint32_t *>(_iterations.address),
               .mesh_grid =
                   reinterpret_cast<uint32_t *>(indirect_mesh_grid.address),
               .reduce_grid =
@@ -111,11 +122,9 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
               .delta = delta,
           });
 
-      _ctx.barrier(indirect_mesh_grid, Access::Write, Access::IndirectRead); 
-
       _ctx.barrier(*past, Access::Write, Access::Read);
-      _ctx.barrier(*curr, Access::Write, Access::Write);
 
+      _ctx.barrier(indirect_mesh_grid, Access::Write, Access::IndirectRead);
       prc->record_indirect(
           indirect_mesh_grid,
           {
@@ -130,17 +139,27 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
               .edges_n = G.num_edges,
           });
 
+      _ctx.barrier(*curr, Access::Write, Access::Write);
+
+      _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
+      danglingHandler->record_indirect(indirect_reduce_grid, {
+              .past_pr = reinterpret_cast<float *>(past->address),
+              .curr_pr = reinterpret_cast<float *>(curr->address),
+              .out_degree = reinterpret_cast<uint32_t *>(out_degree.address),
+              .vertices_n = G.num_vertices,
+      });
+
       _ctx.barrier(*curr, Access::Write, Access::Read);
       _ctx.barrier(_d_delta, Access::Write, Access::Write);
-      _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
 
       ReductionIn reductionIn = {
           .past_pr = reinterpret_cast<float *>(past->address),
           .current_pr = reinterpret_cast<float *>(curr->address),
-          .d_delta = reinterpret_cast<float*>(_d_delta.address),
+          .d_delta = reinterpret_cast<float *>(_d_delta.address),
           .delta = delta,
+          .d = 0.85,
           .vertices_n = G.num_vertices,
-          .d = 0.85};
+      };
       reduction->record_indirect(indirect_reduce_grid, reductionIn);
 
       _ctx.barrier(_d_delta, Access::Write, Access::Read);
@@ -154,17 +173,24 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
     _ctx.invalidate(_h_pr_results);
   } while (*h_delta > delta);
   auto t2 = std::chrono::high_resolution_clock::now();
+  {
+    float del = *h_delta;
+    std::cout << std::format("Last delta: {}", del);
+  }
 
   _ctx.copy(_iterations, _h_pr_results);
   _ctx.fsync();
   _ctx.invalidate(_h_pr_results);
-  volatile auto h_iterations = reinterpret_cast<uint32_t*>(_h_pr_results.mappedPtr);
+  volatile auto h_iterations =
+      reinterpret_cast<uint32_t *>(_h_pr_results.mappedPtr);
   auto iterations = *h_iterations;
 
   times = t2 - t1;
-  std::cout << std::format("\nIterations approx: {}, Time: {}, Time/Iteration(approx): {}",
-                           iterations, times, times/iterations)
-            << std::endl;
+  std::cout
+      << std::format(
+             "\nIterations approx: {}, Time: {}, Time/Iteration(approx): {}",
+             iterations, times, times / iterations)
+      << std::endl;
   past = (iterations % 2) ? &current_pr : &past_pr;
   _ctx.copy(*past, _h_pr_results);
   _ctx.fsync();
