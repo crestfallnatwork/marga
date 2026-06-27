@@ -65,7 +65,7 @@ def main():
     base_name = os.path.basename(input_file).split('.')[0]
     output_json = f"{base_name}.reflection.json"
     
-    subprocess.run(["slangc", input_file, "-target", "spirv", "-fspv-reflect", "-DWAVE_SIZE=32", "-reflection-json", output_json, "-o", f"{base_name}.spv"], check=True)
+    subprocess.run(["_deps/slang-src/bin/slangc", input_file, "-target", "spirv", "-fspv-reflect", "-DWAVE_SIZE=32", "-reflection-json", output_json, "-o", f"{base_name}.spv"], check=True)
 
     with open(output_json, 'r') as f:
         reflection = json.load(f)
