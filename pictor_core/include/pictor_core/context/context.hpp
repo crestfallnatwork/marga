@@ -4,8 +4,8 @@
 #pragma once
 
 #include "pictor_core/context/result_type.hpp"
-#include "pictor_core/execution/stream.hpp"
 #include "pictor_core/execution/shader_compiler.hpp"
+#include "pictor_core/execution/stream.hpp"
 #include "pictor_core/memory/allocation_type.hpp"
 #include "pictor_core/memory/pinned_memory_allocator.hpp"
 #include "pictor_core/memory/pool_allocator.hpp"
@@ -41,7 +41,8 @@ public:
 
   void copy(const AllocationInfo &src, const AllocationInfo &dst,
             StreamHandle stream = cDefaultStream);
-  void fill(const AllocationInfo &dst, uint32_t value,
+  void fill(const AllocationInfo &dst, uint32_t value, size_t offset = 0,
+            size_t size = std::numeric_limits<size_t>::max(),
             StreamHandle stream = cDefaultStream);
   void fill(const AllocationInfo &dst, size_t offset, size_t size,
             uint32_t value, StreamHandle stream = cDefaultStream);

@@ -99,8 +99,10 @@ void Context::copy(const AllocationInfo &src, const AllocationInfo &dst,
 }
 
 void Context::fill(const AllocationInfo &dst, uint32_t value,
+                   size_t offset, size_t size,
                    StreamHandle handle) {
-  return fill(dst, dst.offset, dst.size, value);
+  if(size == std::numeric_limits<size_t>::max()) size = dst.size;
+  return fill(dst, offset, size, value);
 }
 
 void Context::fill(const AllocationInfo &dst, size_t offset, size_t size,
