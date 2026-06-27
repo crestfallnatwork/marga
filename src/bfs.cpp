@@ -7,21 +7,9 @@
 
 // Generated headers from Slang
 #include <chrono>
-#include <format>
-#include <fstream>
 
 namespace pictor {
 namespace graphs {
-
-namespace {
-std::string load_shader_file(const std::string &path) {
-  std::ifstream file(path);
-  if (!file.is_open())
-    return "";
-  return std::string((std::istreambuf_iterator<char>(file)),
-                     std::istreambuf_iterator<char>());
-}
-} // namespace
 
 BFS::BFS(Context &ctx) : _ctx(ctx) {
   bfs.reset(bfs_shader::BFSExecutor::create(ctx).val().release());
