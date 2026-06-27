@@ -9,7 +9,6 @@ static const uint cMaxMeshDim = 65535;
 
 struct SharedReductionTile {
     float32_t partial_errors[1024/WAVE_SIZE];
-    float32_t partial_dangling[1024/WAVE_SIZE];
 }
 groupshared SharedReductionTile reductionTile;
 
@@ -139,7 +138,7 @@ void prc_mesh(
             }
         }
 
-        uint src = *(prIn.column_indices + edge_offset);
+        uint src = *((uint32_t*)(((uint64_t)prIn.column_indices + edge_offset*4ull)));
         pull = prIn.past_pr[src]/prIn.out_degrees[src];
     }
 
@@ -172,20 +171,44 @@ struct DanglingIn{
     uint64_t vertices_n;
 }
 
+struct DanglingSharedTile {
+    float32_t partials[1024/WAVE_SIZE];
+}
+groupshared DanglingSharedTile danglingTile;
 /* handle nodes with zero degree - in or out*/
 // @bind(dangling)
 [[vk::push_constant]]
 uniform DanglingIn danglingIn;
 [shader("compute")]
 [numthreads(1024,1,1)]
-void dangling(uint threadId : SV_DispatchThreadID) {
-    if(threadId >= danglingIn.vertices_n) {
-        return;
+void dangling(uint32_t threadId : SV_DispatchThreadID,
+            uint lid : SV_GroupIndex,
+            uint gid : SV_GroupID,
+) {
+    float32_t dangling = 0;
+    if(threadId < danglingIn.vertices_n) {
+        uint outgoing = danglingIn.out_degree[threadId];
+        if(outgoing == 0) {
+            dangling = danglingIn.past_pr[threadId];
+        }
     }
-    uint outgoing = danglingIn.out_degree[threadId];
-    if(outgoing == 0) {
-        InterlockedAdd(danglingIn.curr_pr[danglingIn.vertices_n],
-                    danglingIn.past_pr[threadId]);
+    uint sgid = WaveGetWaveIndex();
+    dangling = WaveActiveSum(dangling);
+    if(WaveIsFirstLane()) {
+       danglingTile.partials[sgid] = dangling;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    if(sgid == 0) {
+        float32_t partial = 0;
+        if(lid < 1024/WaveGetLaneCount()) {
+            partial = danglingTile.partials[lid];
+        }
+        partial = WaveActiveSum(partial);
+        if(WaveIsFirstLane()) {
+            InterlockedAdd(danglingIn.curr_pr[danglingIn.vertices_n], partial);
+        }
     }
 }
 
@@ -201,15 +224,15 @@ struct OutDegreeIn {
 [[vk::push_constant]]
 uniform OutDegreeIn outDegreeIn;
 [shader("compute")]
-[numthreads(64,1,1)]
+[numthreads(256,1,1)]
 void outdegree(uint32_t threadId: SV_DispatchThreadID) {
     if(threadId >= outDegreeIn.vertices_n) {
         return;
     }
     uint32_t degree = outDegreeIn.row_offsets[threadId+1] - outDegreeIn.row_offsets[threadId];
-    uint32_t *start_col = outDegreeIn.column_indices + outDegreeIn.row_offsets[threadId];
+    uint64_t start_col_addr = (uint64_t)outDegreeIn.column_indices + outDegreeIn.row_offsets[threadId]*4ull;
     for(uint32_t i = 0; i < degree; i++) {
-        uint32_t src = *(start_col + i);
+        uint32_t src = *(uint32_t*)(start_col_addr + i*4ull);
         InterlockedAdd(outDegreeIn.out_degrees[src], 1);
     }
 }

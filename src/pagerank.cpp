@@ -78,7 +78,7 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
     out_degree =
         _ctx.pool_allocator->allocate(sizeof(uint32_t) * G.num_vertices, 0);
     _ctx.fill(out_degree, 0);
-    _ctx.barrier(out_degree, Access::TransferWrite, Access::Read);
+    _ctx.barrier(out_degree, Access::TransferWrite, Access::Write);
     outdegree->record(
         G.num_vertices, 1, 1,
         {
