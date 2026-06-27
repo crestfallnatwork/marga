@@ -41,29 +41,23 @@ int main(int argc, char *argv[]) {
         auto [pr_res, _] = pr.run(g, 1e-4, pictor::graphs::GraphLayout::CSC);
         csc = std::move(pr_res);
     }
-    // {
-    //     std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
-    //     auto g = pictor::graphs::Graph::import(ctx, graph_file, false,
-    //                                         pictor::graphs::GraphLayout::CSR);
-    //     pictor::graphs::PageRank pr(ctx);
-    //     auto [pr_res, _] = pr.run(g, 1e-5, pictor::graphs::GraphLayout::CSR);
-    //     csr = std::move(pr_res);
-    // }
 
     {
-        std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
+        std::cout << "Running sequential push iteration to validate fixed point behaviour:" << std::endl;
         auto g = pictor::graphs::Graph::import(ctx, graph_file, false,
                                             pictor::graphs::GraphLayout::CSR);
         csr = csc;
+        float dangling = 0.;
         std::fill(csr.begin(), csr.end(), 0.);
         for(uint32_t vertex = 0; vertex < g.num_vertices; vertex++) {
             uint64_t edges = g.row_offsets[vertex+1] - g.row_offsets[vertex];
+            if(edges == 0) dangling += csc[vertex];
             for(uint64_t dst : g.column_indices.subspan(g.row_offsets[vertex], edges)) {
                 csr[dst] += (csc[vertex]/edges);
             }
         }
         for(uint32_t vertex = 0; vertex < g.num_vertices; vertex++) {
-            auto csr_v = ((1. - 0.85)/float(g.num_vertices)) + 0.85*csr[vertex];
+            auto csr_v = ((1. - 0.85)/float(g.num_vertices)) + 0.85*(csr[vertex]+dangling);
             if(std::abs(csr_v - csc[vertex]) > 1e-4) {
                 std::cout << std::format("Didn't converge, vertex: {}, csc val: {}, new val: {}",
                                          vertex, csc[vertex], csr_v) << std::endl;

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Author: Himanshu Gupta <himanshu3@iisc.ac.in>
 
+/*
+ * Calculate page rank on the gpu using mesh shaders
+ * Page rank is an iterative 
+ */
+
 static const uint cMaxMeshDim = 65535;
 
 struct SharedReductionTile {
@@ -27,9 +32,10 @@ void reduce(uint32_t threadId : SV_DispatchThreadID,
 ) {
     float delta = 0.;
     if(threadId < reduceIn.vertices_n)  {
+        float dangling = reduceIn.current_pr[reduceIn.vertices_n]/reduceIn.vertices_n;
         float cur_pr = reduceIn.current_pr[threadId];
         cur_pr = (1 - reduceIn.d)/reduceIn.vertices_n +
-                reduceIn.d*cur_pr;
+                reduceIn.d*(cur_pr + dangling);
 
         delta = abs(reduceIn.past_pr[threadId] - cur_pr);
 
@@ -54,6 +60,7 @@ void reduce(uint32_t threadId : SV_DispatchThreadID,
         delta = WaveActiveSum(halve);
         if(WaveIsFirstLane()) {
             InterlockedAdd(*reduceIn->d_delta, delta);
+            reduceIn.past_pr[reduceIn.vertices_n] = 0;
         }
     }
 }
@@ -153,6 +160,10 @@ void prc_mesh(
 
     bool write = (dst_next != dst);
     if(write) {
+        /* dangling */
+        if(prIn.out_degrees[dst] == 0) {
+            InterlockedAdd(prIn.curr_pr[prIn.vertices_n], pull);
+        }
         InterlockedAdd(prIn.curr_pr[dst], pull);
     }
 

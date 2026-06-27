@@ -24,8 +24,8 @@ PageRank::PageRank(Context &ctx) : _ctx(ctx) {
 PageRank::~PageRank() { _cleanup_buffers(); }
 
 void PageRank::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges) {
-  past_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices, 0);
-  current_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices, 0);
+  past_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices + 1, 0);
+  current_pr = _ctx.pool_allocator->allocate(sizeof(float) * num_vertices + 1, 0);
   _h_pr_results =
       _ctx.pinned_allocator->allocate(sizeof(float) * num_vertices, 0);
   indirect_mesh_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0);
