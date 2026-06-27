@@ -79,6 +79,8 @@ struct SharedPRCPayload {
 };
 groupshared SharedPRCPayload sharedPRPayload;
 
+static const int PageRankVertexCount = 64;
+
 // @bind(prc_task)
 [[vk::push_constant]]
 uniform PageRankCSCIn prIn;
@@ -89,8 +91,8 @@ void prc_task(
     uint lid : SV_GroupIndex,
 ) {
 
-    uint32_t v_start = threadId * 64;
-    uint32_t v_end = v_start + 64;
+    uint32_t v_start = threadId * PageRankVertexCount;
+    uint32_t v_end = v_start + PageRankVertexCount;
     if(v_end > prIn.vertices_n) v_end = prIn.vertices_n;
 
     uint32_t total_edges = prIn.row_offsets[v_end] - prIn.row_offsets[v_start];
@@ -132,7 +134,7 @@ void prc_mesh(
         uint64_t edge_offset = local_offset + prIn.row_offsets[dst];
         /* evil binary search */
         [unroll]
-        for (uint step = (64 >> 1); step > 0; step >>= 1) {
+        for (uint step = (PageRankVertexCount >> 1); step > 0; step >>= 1) {
             if (dst + step < prIn.vertices_n && prIn.row_offsets[dst + step] <= edge_offset) {
                 dst += step;
             }
@@ -258,7 +260,7 @@ void dispatch() {
         *dispatchIn->d_delta = 0.;
         *dispatchIn->iterations = *(dispatchIn->iterations) + 1;
         dispatchIn.curr_pr[dispatchIn.vertices_n] = 0.;
-        mesh_grid[0] = ((dispatchIn.vertices_n + 63)/64);
+        mesh_grid[0] = ((dispatchIn.vertices_n + PageRankVertexCount - 1)/PageRankVertexCount);
         reduce_grid[0] = ((dispatchIn.vertices_n + 1023)/1024);
     } else {
         mesh_grid[0] = 0;
