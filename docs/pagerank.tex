@@ -27,7 +27,7 @@
     showstringspaces=false,
     showtabs=false,                  
     tabsize=4,
-    morekeywords={function, parallel, over, with, steps, of, call, if, while, atomic_add, swap, min, abs, gpu_barrier}
+    morekeywords={function, parallel, over, with, steps, of, call, if, while, reduce_add, swap, min, abs, gpu_barrier}
 }
 
 \title{PageRank: Problem Statement and Computation}
@@ -123,11 +123,11 @@ function [parallel over edges: global_edge_idx] compute_weights(batch_start, bat
     
     partial_value = past_pagerank[src_vertex] / out_degree[src_vertex]
     
-    atomic_add(current_pagerank[dest_vertex], partial_value)
+    reduce_add(current_pagerank[dest_vertex], partial_value)
 
 function [parallel over vertices: i] accumulate_dangling(global_dangling_sum):
     if out_degree[i] == 0:
-        atomic_add(global_dangling_sum, past_pagerank[i])
+        reduce_add(global_dangling_sum, past_pagerank[i])
 
 function [parallel over vertices: i] finalize_and_compute_error(dangling_sum, global_error):
     base_addition = ((1.0 - alpha) / N) + (alpha * dangling_sum / N)
@@ -135,7 +135,7 @@ function [parallel over vertices: i] finalize_and_compute_error(dangling_sum, gl
     current_pagerank[i] = (alpha * current_pagerank[i]) + base_addition
     
     diff = abs(current_pagerank[i] - past_pagerank[i])
-    atomic_add(global_error, diff)
+    reduce_add(global_error, diff)
     
     past_pagerank[i] = 0.0
 
