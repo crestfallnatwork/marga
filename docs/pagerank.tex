@@ -1,0 +1,66 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[margin=1in]{geometry}
+
+\title{PageRank: Problem Statement and Computation}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Problem Statement}
+
+\subsection{The Random Surfer Model}
+Consider a random surfer on the web; initially, the surfer is equally likely to be anywhere on the web. At each iteration, the surfer uniformly randomly picks a location out of all the outlinks of the current page. If they find themselves at a dead end, they randomly jump to one of the pages on the web. At the end of every iteration, there is also a chance that they just give up and go to a completely random website.
+
+\subsection{Mathematical Explanation}
+Mathematically, we can express this entire process as a sparse matrix-vector multiplication. Let $G$ be the web graph in matrix format, specifically a column-stochastic transition matrix where $N$ is the total number of pages on the web.
+
+If page $j$ has $d_j$ outlinks, the matrix entry $G_{ij} = \frac{1}{d_j}$ if there is a link from page $j$ to page $i$, and $G_{ij} = 0$ otherwise.
+
+To account for the dead ends (pages with no outlinks, meaning $d_j = 0$), we adjust the matrix such that if a column is entirely zeros, it is replaced with $\frac{1}{N}$ in every row. This maps to the condition where a surfer at a dead end jumps uniformly to any random page.
+
+Next, let $\alpha$ be the damping factor (traditionally set around $0.85$), which represents the probability that the surfer continues clicking links. The probability that the surfer gives up and teleports to a random website is $1 - \alpha$.
+
+Let $\mathbf{r}$ be an $N$-dimensional vector representing the PageRank scores, essentially the probability distribution of the surfer's location. The PageRank vector is updated iteratively at each step $k$ using the following equation:
+
+\[ \mathbf{r}^{(k+1)} = \alpha G \mathbf{r}^{(k)} + \frac{1 - \alpha}{N} \mathbf{1} \]
+
+where $\mathbf{1}$ is an $N$-dimensional column vector of all ones.
+
+As the iterations continue ($k \to \infty$), this process converges to a stationary distribution $\mathbf{r}^*$. This stationary distribution satisfies $\mathbf{r}^* = \alpha G \mathbf{r}^* + \frac{1 - \alpha}{N} \mathbf{1}$ and yields the final PageRank score for every page in the network.
+
+\section{Computation}
+\subsection{Representation}
+We don't actually represent the graph as a dense matrix. Instead, we maintain a Compressed Sparse Column (CSC) graph and an out-degree vector. A CSC layout (like CSR, Compressed Sparse Row) is a way to compactly represent sparse matrices. The out-degree vector just contains the out-degree of each vertex.
+
+In graph terms, both layouts utilize two vectors: one contains all the edges, and the other contains the information needed to find which edges belong to which vertex. First, you define a total order on the vertices and index them from $0$ to $N - 1$. You create the \texttt{edge\_list} by concatenating each vertex's adjacency list in order.
+
+Now that you have the \texttt{edge\_list}, all that remains is to generate the \texttt{offsets\_list} so we can actually find which edges belong to which vertex. To do this, you initialize a list of size $N+1$ and fill the first $N$ indices with the corresponding vertex's adjacency list length. You then compute an exclusive scan on this list (a prefix sum that doesn't include the current element).
+
+Now, to know where a vertex's adjacency list starts, you go to its entry in the \texttt{offsets\_list} and use that value to index into the \texttt{edge\_list}. To find the end, you simply look at the next entry in the \texttt{offsets\_list}.
+
+The primary difference between CSC and CSR in this context is that CSC stores an incoming edge list, while CSR stores an outgoing edge list. That is, each entry in the CSC \texttt{edge\_list} is an edge coming to the current vertex, and similarly, for CSR, each entry is an outgoing edge.
+
+\subsection{GPU Computation}
+We divide the task into three separate kernels. We maintain two PageRank vectors: past and current. The past PageRank vector contains the PageRank computed in the previous iteration, while the current PageRank vector is the one currently being computed. Initially, we fill the past PageRank vector with $1/N$ and initialize the current PageRank vector to $0$.
+
+\begin{enumerate}
+    \item \textbf{Weight Computation:} 
+    This is the main part of the algorithm, and most of the execution time is spent on this kernel. The basic execution is quite simple. We take a batch of vertices in sequential order from the frontier (here, it is the full graph), calculate the number of edges in the batch, and dispatch fixed-size mesh workgroups over these edges. 
+    
+    Each thread in the workgroup performs a very fast binary search over the \texttt{offsets\_list} for the vertex batch to find its corresponding destination vertex. Because the graph is in CSC layout, each vertex in the batch acts as a destination vertex. The thread reads the source vertex from the \texttt{edge\_list}, looks up its out-degree, and calculates a partial value by dividing the past PageRank of the source by the out-degree of the source. Finally, we perform a segmented reduction based on the destination vertices to accumulate these partial values.
+    
+    Particularly for our implementation, the batching is handled by a single-threaded task shader. The shader computes the total edges of the batch using the \texttt{offsets\_list} and uses this edge count to dispatch meshes. The payload simply contains the starting and ending vertex indices of the batch.
+
+    \item \textbf{Dangling Accumulation:} 
+    The job of this kernel is to take all vertices with an out-degree of $0$ (dead ends) and accumulate their PageRanks into a single global value. To achieve this, we just do a conditional reduction on the past PageRank vector.
+
+    \item \textbf{Final Computation and Error Reduction:} 
+    In this kernel, we apply the final damping factor and redistribute the dangling value that was reduced in the previous step across all vertices. After that, we compute the final error (the $L_1$ norm of the difference between the past and current vectors), which is just another reduction. Based on this error, we evaluate our convergence condition to judge if we should continue iterating or halt.
+\end{enumerate}
+
+\end{document}
