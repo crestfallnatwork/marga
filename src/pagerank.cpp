@@ -139,8 +139,6 @@ PageRank::run(Graph &G, float delta, GraphLayout layout) {
               .edges_n = G.num_edges,
           });
 
-      _ctx.barrier(*curr, Access::Write, Access::Write);
-
       _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
       danglingHandler->record_indirect(indirect_reduce_grid, {
               .past_pr = reinterpret_cast<float *>(past->address),
