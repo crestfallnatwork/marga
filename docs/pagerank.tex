@@ -2,6 +2,33 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.98,0.98,0.98}
+
+\lstdefinestyle{pseudocode}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen}\itshape,
+    keywordstyle=\color{blue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=4,
+    morekeywords={function, parallel, over, with, steps, of, call, if, while, atomic_add, swap, min, abs, gpu_barrier}
+}
 
 \title{PageRank: Problem Statement and Computation}
 \author{}
@@ -62,5 +89,80 @@ We divide the task into three separate kernels. We maintain two PageRank vectors
     \item \textbf{Final Computation and Error Reduction:} 
     In this kernel, we apply the final damping factor and redistribute the dangling value that was reduced in the previous step across all vertices. After that, we compute the final error (the $L_1$ norm of the difference between the past and current vectors), which is just another reduction. Based on this error, we evaluate our convergence condition to judge if we should continue iterating or halt.
 \end{enumerate}
+
+\subsection{Pseudocode}
+
+\pagebreak
+\begin{lstlisting}[style=pseudocode, language=C]
+// --- Data Structures & Globals ---
+// N: Total number of vertices (pages)
+// alpha: Damping factor (e.g., 0.85)
+// edge_list: CSC array containing source vertices (incoming edges)
+// offsets_list: CSC array of size N+1 containing edge offsets for each destination vertex
+// out_degree: Array of size N containing the out-degree of each vertex
+// past_pagerank: Array of size N
+// current_pagerank: Array of size N
+// tolerance: Convergence threshold
+
+// Kernels
+
+function [parallel over vertices: i] initialize_pagerank():
+    past_pagerank[i] = 1.0 / N
+    current_pagerank[i] = 0.0
+
+function [parallel over N with steps of batch_size: batch_start] dispatch_weight_computation():
+    batch_end = min(batch_size + batch_start, N)
+    total_edges = offsets_list[batch_end] - offsets_list[batch_start]
+    
+    // dispatch mesh workgroups
+    call [parallel over total_edges] compute_weights(batch_start, batch_end)
+
+function [parallel over edges: global_edge_idx] compute_weights(batch_start, batch_end):
+    dest_vertex = binary_search_for_dest(offsets_list, global_edge_idx, batch_start, batch_end)
+    src_vertex = edge_list[global_edge_idx]
+    
+    partial_value = past_pagerank[src_vertex] / out_degree[src_vertex]
+    
+    atomic_add(current_pagerank[dest_vertex], partial_value)
+
+function [parallel over vertices: i] accumulate_dangling(global_dangling_sum):
+    if out_degree[i] == 0:
+        atomic_add(global_dangling_sum, past_pagerank[i])
+
+function [parallel over vertices: i] finalize_and_compute_error(dangling_sum, global_error):
+    base_addition = ((1.0 - alpha) / N) + (alpha * dangling_sum / N)
+    
+    current_pagerank[i] = (alpha * current_pagerank[i]) + base_addition
+    
+    diff = abs(current_pagerank[i] - past_pagerank[i])
+    atomic_add(global_error, diff)
+    
+    past_pagerank[i] = 0.0
+
+// Host Code
+
+function compute_pagerank():
+    call [parallel over N] initialize_pagerank()
+    gpu_barrier()
+    
+    error = infinity
+    batch_size = 64
+    
+    while error > tolerance:
+        call [parallel over N with steps of batch_size] dispatch_weight_computation()
+        
+        global_dangling_sum = 0.0
+        call [parallel over N] accumulate_dangling(global_dangling_sum)
+
+        gpu_barrier()
+        
+        global_error = 0.0
+        call [parallel over N] finalize_and_compute_error(global_dangling_sum, global_error)
+        
+        gpu_barrier()
+        
+        error = global_error
+        swap(past_pagerank, current_pagerank)
+\end{lstlisting}
 
 \end{document}
