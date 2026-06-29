@@ -9,9 +9,9 @@
  */
 
 #include "csr.hpp"
-#include <vector>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace pictor {
 namespace graphs {
@@ -21,12 +21,12 @@ struct ValidationTimings {
 };
 
 class BFSValidator {
-public:
-    static std::pair<std::vector<uint32_t>, ValidationTimings> run(const Graph& graph, uint32_t source);
-    
-    static bool verify(const Graph& graph, uint32_t source, 
-                      std::span<const uint32_t> gpu_distances, 
-                      std::span<const uint32_t> cpu_distances);
+  public:
+    static std::pair<std::vector<uint32_t>, ValidationTimings> run(const Graph& graph,
+                                                                   uint32_t source);
+
+    static bool verify(const Graph& graph, uint32_t source, std::span<const uint32_t> gpu_distances,
+                       std::span<const uint32_t> cpu_distances);
 };
 
 } // namespace graphs

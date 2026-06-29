@@ -3,12 +3,12 @@
 
 /*
  * This is free and unencumbered software released into the public domain.
- * 
+ *
  * Anyone is free to copy, modify, publish, use, compile, sell, or
  * distribute this software, either in source code form or as a compiled
  * binary, for any purpose, commercial or non-commercial, and by any
  * means.
- * 
+ *
  * In jurisdictions that recognize copyright laws, the author or authors
  * of this software dedicate any and all copyright interest in the
  * software to the public domain. We make this dedication for the benefit
@@ -16,7 +16,7 @@
  * successors. We intend this dedication to be an overt act of
  * relinquishment in perpetuity of all present and future rights to this
  * software under copyright law.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
@@ -24,7 +24,7 @@
  * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
- * 
+ *
  * For more information, please refer to <http://unlicense.org/>
  */
 
@@ -33,11 +33,11 @@
 
 #include "pictor_core/context/context.hpp"
 
-#include <iostream>
 #include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <fcntl.h>
+#include <iostream>
 #include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -51,288 +51,298 @@ namespace graphs {
 namespace {
 
 struct MappedFile {
-  void *data;
-  size_t size;
+    void* data;
+    size_t size;
 
-  MappedFile(const std::string &filename) {
-    int fd = open(filename.c_str(), O_RDONLY);
-    if (fd == -1)
-      throw std::runtime_error("Could not open file: " + filename);
+    MappedFile(const std::string& filename)
+    {
+        int fd = open(filename.c_str(), O_RDONLY);
+        if (fd == -1)
+            throw std::runtime_error("Could not open file: " + filename);
 
-    struct stat st;
-    if (fstat(fd, &st) == -1) {
-      close(fd);
-      throw std::runtime_error("Could not stat file: " + filename);
+        struct stat st;
+        if (fstat(fd, &st) == -1) {
+            close(fd);
+            throw std::runtime_error("Could not stat file: " + filename);
+        }
+
+        size = (size_t)st.st_size;
+        data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        close(fd);
+
+        if (data == MAP_FAILED)
+            throw std::runtime_error("Could not mmap file: " + filename);
     }
 
-    size = (size_t)st.st_size;
-    data = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-
-    if (data == MAP_FAILED)
-      throw std::runtime_error("Could not mmap file: " + filename);
-  }
-
-  ~MappedFile() {
-    if (data != MAP_FAILED)
-      munmap(data, size);
-  }
+    ~MappedFile()
+    {
+        if (data != MAP_FAILED)
+            munmap(data, size);
+    }
 };
 
-const char *skip_comments(const char *ptr, const char *end) {
-  while (ptr < end && *ptr == '%') {
-    while (ptr < end && *ptr != '\n')
-      ptr++;
-    if (ptr < end)
-      ptr++;
-  }
-  return ptr;
+const char* skip_comments(const char* ptr, const char* end)
+{
+    while (ptr < end && *ptr == '%') {
+        while (ptr < end && *ptr != '\n')
+            ptr++;
+        if (ptr < end)
+            ptr++;
+    }
+    return ptr;
 }
 
-const char *next_line(const char *ptr, const char *end) {
-  while (ptr < end && *ptr != '\n')
-    ptr++;
-  if (ptr < end)
-    ptr++;
-  return ptr;
+const char* next_line(const char* ptr, const char* end)
+{
+    while (ptr < end && *ptr != '\n')
+        ptr++;
+    if (ptr < end)
+        ptr++;
+    return ptr;
 }
 
 struct MtxHeader {
-  uint64_t rows, cols, edges;
-  bool symmetric;
-  const char *data_start;
+    uint64_t rows, cols, edges;
+    bool symmetric;
+    const char* data_start;
 };
 
-MtxHeader parse_header(const char *start, const char *end) {
-  const char *first_line_end = next_line(start, end);
-  std::string_view header_line(start, (size_t)(first_line_end - start));
-  bool symmetric = header_line.find("symmetric") != std::string_view::npos;
+MtxHeader parse_header(const char* start, const char* end)
+{
+    const char* first_line_end = next_line(start, end);
+    std::string_view header_line(start, (size_t)(first_line_end - start));
+    bool symmetric = header_line.find("symmetric") != std::string_view::npos;
 
-  const char *ptr = skip_comments(start, end);
-  MtxHeader header;
-  header.symmetric = symmetric;
+    const char* ptr = skip_comments(start, end);
+    MtxHeader header;
+    header.symmetric = symmetric;
 
-  auto res = std::from_chars(ptr, end, header.rows);
-  ptr = res.ptr;
-  while (ptr < end && isspace(*ptr))
-    ptr++;
-  res = std::from_chars(ptr, end, header.cols);
-  ptr = res.ptr;
-  while (ptr < end && isspace(*ptr))
-    ptr++;
-  res = std::from_chars(ptr, end, header.edges);
-  ptr = res.ptr;
-  header.data_start = next_line(ptr, end);
+    auto res = std::from_chars(ptr, end, header.rows);
+    ptr      = res.ptr;
+    while (ptr < end && isspace(*ptr))
+        ptr++;
+    res = std::from_chars(ptr, end, header.cols);
+    ptr = res.ptr;
+    while (ptr < end && isspace(*ptr))
+        ptr++;
+    res               = std::from_chars(ptr, end, header.edges);
+    ptr               = res.ptr;
+    header.data_start = next_line(ptr, end);
 
-  return header;
+    return header;
 }
 
 } // namespace
 
-Graph::Graph(Context *ctx) : ctx(ctx) {}
-Graph::~Graph() {
-  if (ctx) {
-    ctx->deallocate(h_row_offsets);
-    ctx->deallocate(h_column_indices);
-    ctx->deallocate(d_row_offsets);
-    ctx->deallocate(d_column_indices);
-  }
-}
-
-void Graph::save_to_binary(const std::string &prefix) const {
-  throw std::string{"not implemented"};
-}
-
-void Graph::load_from_binary(const std::string &prefix) {
-  throw std::string{"not implemented"};
-}
-
-Graph Graph::import(Context &ctx, std::string const &file, bool symmetrize, GraphLayout target_layout) {
-  MappedFile mf(file);
-  const char *start = static_cast<const char *>(mf.data);
-  const char *end = start + mf.size;
-
-  auto header = parse_header(start, end);
-  bool force_symmetric = symmetrize || header.symmetric;
-
-  uint64_t num_vertices = std::max(header.rows, header.cols);
-
-  Graph g(&ctx);
-  g.num_vertices = num_vertices;
-  g.layout = target_layout;
-
-  std::vector<std::atomic<uint64_t>> degrees(num_vertices + 1);
-  for (auto &d : degrees)
-    d.store(0);
-
-  unsigned int num_threads = std::thread::hardware_concurrency();
-  std::vector<std::thread> threads;
-
-  auto process_chunk_count = [&](const char *c_start, const char *c_end) {
-    const char *ptr = c_start;
-    while (ptr < c_end) {
-      uint64_t u, v;
-      auto res = std::from_chars(ptr, c_end, u);
-      if (res.ec != std::errc{})
-        break;
-      ptr = res.ptr;
-      while (ptr < c_end && isspace(*ptr))
-        ptr++;
-      res = std::from_chars(ptr, c_end, v);
-      if (res.ec != std::errc{})
-        break;
-      ptr = next_line(res.ptr, c_end);
-
-      if (target_layout == GraphLayout::CSC) {
-          if (v > 0 && v <= num_vertices)
-              degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
-          if (force_symmetric && u != v) {
-              if (u > 0 && u <= num_vertices)
-                  degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
-          }
-      } else {
-          if (u > 0 && u <= num_vertices)
-              degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
-          if (force_symmetric && u != v) {
-              if (v > 0 && v <= num_vertices)
-                  degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
-          }
-      }
+Graph::Graph(Context* ctx) : ctx(ctx) {}
+Graph::~Graph()
+{
+    if (ctx) {
+        ctx->deallocate(h_row_offsets);
+        ctx->deallocate(h_column_indices);
+        ctx->deallocate(d_row_offsets);
+        ctx->deallocate(d_column_indices);
     }
-  };
+}
 
-  const char *data_ptr = header.data_start;
-  size_t data_size = (size_t)(end - data_ptr);
-  for (unsigned int i = 0; i < num_threads; ++i) {
-    const char *c_start = data_ptr + (i * data_size / num_threads);
-    const char *c_end = data_ptr + ((i + 1) * data_size / num_threads);
+void Graph::save_to_binary(const std::string& prefix) const
+{
+    throw std::string{"not implemented"};
+}
 
-    if (i > 0)
-      c_start = next_line(c_start, end);
-    if (i < num_threads - 1)
-      c_end = next_line(c_end, end);
-    else
-      c_end = end;
+void Graph::load_from_binary(const std::string& prefix)
+{
+    throw std::string{"not implemented"};
+}
 
-    if (c_start < c_end)
-      threads.emplace_back(process_chunk_count, c_start, c_end);
-  }
+Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
+                    GraphLayout target_layout)
+{
+    MappedFile mf(file);
+    const char* start = static_cast<const char*>(mf.data);
+    const char* end   = start + mf.size;
 
-  for (auto &t : threads)
-    t.join();
-  threads.clear();
+    auto header          = parse_header(start, end);
+    bool force_symmetric = symmetrize || header.symmetric;
 
-  // Allocate host pinned memory for row offsets
-  g.h_row_offsets = ctx.pinned_allocator->allocate(
-      (num_vertices + 1) * sizeof(uint64_t), alignof(uint64_t));
-  g.row_offsets = std::span<uint64_t>(
-      static_cast<uint64_t *>(g.h_row_offsets.mappedPtr), num_vertices + 1);
+    uint64_t num_vertices = std::max(header.rows, header.cols);
 
-  uint64_t current_offset = 0;
-  for (uint64_t i = 0; i < num_vertices; ++i) {
-    g.row_offsets[i] = current_offset;
-    current_offset += degrees[i].load(std::memory_order_relaxed);
-  }
-  g.row_offsets[num_vertices] = current_offset;
-  g.num_edges = current_offset;
+    Graph g(&ctx);
+    g.num_vertices = num_vertices;
+    g.layout       = target_layout;
 
-  // Allocate host pinned memory for column indices
-  g.h_column_indices = ctx.pinned_allocator->allocate(
-      g.num_edges * sizeof(uint32_t), alignof(uint32_t));
-  g.column_indices = std::span<uint32_t>(
-      static_cast<uint32_t *>(g.h_column_indices.mappedPtr), g.num_edges);
+    std::vector<std::atomic<uint64_t>> degrees(num_vertices + 1);
+    for (auto& d : degrees)
+        d.store(0);
 
-  // Use atomic counters for filling column indices in parallel
-  // Reuse degrees vector to store current fill positions (relative to
-  // row_offsets[i])
-  for (auto &d : degrees)
-    d.store(0);
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    std::vector<std::thread> threads;
 
-  auto process_chunk_fill = [&](const char *c_start, const char *c_end) {
-    const char *ptr = c_start;
-    while (ptr < c_end) {
-      uint64_t u, v;
-      auto res = std::from_chars(ptr, c_end, u);
-      if (res.ec != std::errc{})
-        break;
-      ptr = res.ptr;
-      while (ptr < c_end && isspace(*ptr))
-        ptr++;
-      res = std::from_chars(ptr, c_end, v);
-      if (res.ec != std::errc{})
-        break;
-      ptr = next_line(res.ptr, c_end);
+    auto process_chunk_count = [&](const char* c_start, const char* c_end) {
+        const char* ptr = c_start;
+        while (ptr < c_end) {
+            uint64_t u, v;
+            auto res = std::from_chars(ptr, c_end, u);
+            if (res.ec != std::errc{})
+                break;
+            ptr = res.ptr;
+            while (ptr < c_end && isspace(*ptr))
+                ptr++;
+            res = std::from_chars(ptr, c_end, v);
+            if (res.ec != std::errc{})
+                break;
+            ptr = next_line(res.ptr, c_end);
 
-      if (target_layout == GraphLayout::CSC) {
-          if (v > 0 && v <= num_vertices) {
-              uint64_t pos = g.row_offsets[v - 1] +
-                             degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
-              g.column_indices[pos] = (uint32_t)(u - 1);
-          }
-          if (force_symmetric && u != v) {
-              if (u > 0 && u <= num_vertices) {
-                  uint64_t pos = g.row_offsets[u - 1] +
-                                 degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
-                  g.column_indices[pos] = (uint32_t)(v - 1);
-              }
-          }
-      } else {
-          if (u > 0 && u <= num_vertices) {
-            uint64_t pos = g.row_offsets[u - 1] +
-                           degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
-            g.column_indices[pos] = (uint32_t)(v - 1);
-          }
-          if (force_symmetric && u != v) {
-            if (v > 0 && v <= num_vertices) {
-              uint64_t pos = g.row_offsets[v - 1] +
-                             degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
-              g.column_indices[pos] = (uint32_t)(u - 1);
+            if (target_layout == GraphLayout::CSC) {
+                if (v > 0 && v <= num_vertices)
+                    degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                if (force_symmetric && u != v) {
+                    if (u > 0 && u <= num_vertices)
+                        degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                }
+            } else {
+                if (u > 0 && u <= num_vertices)
+                    degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                if (force_symmetric && u != v) {
+                    if (v > 0 && v <= num_vertices)
+                        degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                }
             }
-          }
-      }
+        }
+    };
+
+    const char* data_ptr = header.data_start;
+    size_t data_size     = (size_t)(end - data_ptr);
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        const char* c_start = data_ptr + (i * data_size / num_threads);
+        const char* c_end   = data_ptr + ((i + 1) * data_size / num_threads);
+
+        if (i > 0)
+            c_start = next_line(c_start, end);
+        if (i < num_threads - 1)
+            c_end = next_line(c_end, end);
+        else
+            c_end = end;
+
+        if (c_start < c_end)
+            threads.emplace_back(process_chunk_count, c_start, c_end);
     }
-  };
 
-  for (unsigned int i = 0; i < num_threads; ++i) {
-    const char *c_start = data_ptr + (i * data_size / num_threads);
-    const char *c_end = data_ptr + ((i + 1) * data_size / num_threads);
+    for (auto& t : threads)
+        t.join();
+    threads.clear();
 
-    if (i > 0)
-      c_start = next_line(c_start, end);
-    if (i < num_threads - 1)
-      c_end = next_line(c_end, end);
-    else
-      c_end = end;
+    // Allocate host pinned memory for row offsets
+    g.h_row_offsets =
+        ctx.pinned_allocator->allocate((num_vertices + 1) * sizeof(uint64_t), alignof(uint64_t));
+    g.row_offsets =
+        std::span<uint64_t>(static_cast<uint64_t*>(g.h_row_offsets.mappedPtr), num_vertices + 1);
 
-    if (c_start < c_end)
-      threads.emplace_back(process_chunk_fill, c_start, c_end);
-  }
+    uint64_t current_offset = 0;
+    for (uint64_t i = 0; i < num_vertices; ++i) {
+        g.row_offsets[i] = current_offset;
+        current_offset += degrees[i].load(std::memory_order_relaxed);
+    }
+    g.row_offsets[num_vertices] = current_offset;
+    g.num_edges                 = current_offset;
 
-  for (auto &t : threads)
-    t.join();
+    // Allocate host pinned memory for column indices
+    g.h_column_indices =
+        ctx.pinned_allocator->allocate(g.num_edges * sizeof(uint32_t), alignof(uint32_t));
+    g.column_indices =
+        std::span<uint32_t>(static_cast<uint32_t*>(g.h_column_indices.mappedPtr), g.num_edges);
 
-  // Upload to device
-  //
-  uint64_t row_offset_n = (g.num_vertices + 1);
-  uint64_t row_offset_n_padded = row_offset_n;
-  CheckAllocation(g.d_row_offsets =
-      ctx.pool_allocator->allocate(row_offset_n_padded*sizeof(uint64_t), alignof(uint64_t)));
-  CheckAllocation(g.d_column_indices =
-      ctx.pool_allocator->allocate(g.h_column_indices.size, alignof(uint32_t)));
+    // Use atomic counters for filling column indices in parallel
+    // Reuse degrees vector to store current fill positions (relative to
+    // row_offsets[i])
+    for (auto& d : degrees)
+        d.store(0);
 
-  StreamHandle stream = ctx.create_stream();
-  ctx.copy(g.h_row_offsets, g.d_row_offsets, stream);
-  ctx.copy(g.h_column_indices, g.d_column_indices, stream);
+    auto process_chunk_fill = [&](const char* c_start, const char* c_end) {
+        const char* ptr = c_start;
+        while (ptr < c_end) {
+            uint64_t u, v;
+            auto res = std::from_chars(ptr, c_end, u);
+            if (res.ec != std::errc{})
+                break;
+            ptr = res.ptr;
+            while (ptr < c_end && isspace(*ptr))
+                ptr++;
+            res = std::from_chars(ptr, c_end, v);
+            if (res.ec != std::errc{})
+                break;
+            ptr = next_line(res.ptr, c_end);
 
-  uint64_t toFill = (row_offset_n_padded - row_offset_n)*sizeof(uint64_t);
-  if(toFill > 0) {
-    ctx.fill(g.d_row_offsets, row_offset_n*sizeof(uint64_t),
-            toFill, std::numeric_limits<uint32_t>::max(), stream);
-  }
-  ctx.submit(stream);
-  ctx.sync(stream);
+            if (target_layout == GraphLayout::CSC) {
+                if (v > 0 && v <= num_vertices) {
+                    uint64_t pos          = g.row_offsets[v - 1] +
+                                            degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                    g.column_indices[pos] = (uint32_t)(u - 1);
+                }
+                if (force_symmetric && u != v) {
+                    if (u > 0 && u <= num_vertices) {
+                        uint64_t pos = g.row_offsets[u - 1] +
+                                       degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                        g.column_indices[pos] = (uint32_t)(v - 1);
+                    }
+                }
+            } else {
+                if (u > 0 && u <= num_vertices) {
+                    uint64_t pos          = g.row_offsets[u - 1] +
+                                            degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                    g.column_indices[pos] = (uint32_t)(v - 1);
+                }
+                if (force_symmetric && u != v) {
+                    if (v > 0 && v <= num_vertices) {
+                        uint64_t pos = g.row_offsets[v - 1] +
+                                       degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                        g.column_indices[pos] = (uint32_t)(u - 1);
+                    }
+                }
+            }
+        }
+    };
 
-  return g;
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        const char* c_start = data_ptr + (i * data_size / num_threads);
+        const char* c_end   = data_ptr + ((i + 1) * data_size / num_threads);
+
+        if (i > 0)
+            c_start = next_line(c_start, end);
+        if (i < num_threads - 1)
+            c_end = next_line(c_end, end);
+        else
+            c_end = end;
+
+        if (c_start < c_end)
+            threads.emplace_back(process_chunk_fill, c_start, c_end);
+    }
+
+    for (auto& t : threads)
+        t.join();
+
+    // Upload to device
+    //
+    uint64_t row_offset_n        = (g.num_vertices + 1);
+    uint64_t row_offset_n_padded = row_offset_n;
+    CheckAllocation(g.d_row_offsets = ctx.pool_allocator->allocate(
+                        row_offset_n_padded * sizeof(uint64_t), alignof(uint64_t)));
+    CheckAllocation(g.d_column_indices =
+                        ctx.pool_allocator->allocate(g.h_column_indices.size, alignof(uint32_t)));
+
+    StreamHandle stream = ctx.create_stream();
+    ctx.copy(g.h_row_offsets, g.d_row_offsets, stream);
+    ctx.copy(g.h_column_indices, g.d_column_indices, stream);
+
+    uint64_t toFill = (row_offset_n_padded - row_offset_n) * sizeof(uint64_t);
+    if (toFill > 0) {
+        ctx.fill(g.d_row_offsets, row_offset_n * sizeof(uint64_t), toFill,
+                 std::numeric_limits<uint32_t>::max(), stream);
+    }
+    ctx.submit(stream);
+    ctx.sync(stream);
+
+    return g;
 }
 
 } // namespace graphs

@@ -13,28 +13,32 @@
 
 namespace pictor {
 
-enum class ShaderStage { Compute, Task, Mesh, Fragment };
+enum class ShaderStage {
+    Compute,
+    Task,
+    Mesh,
+    Fragment
+};
 
 struct CompileResult {
-  std::vector<uint32_t> spirv;
-  std::string diagnostics;
-  bool success{false};
+    std::vector<uint32_t> spirv;
+    std::string diagnostics;
+    bool success{false};
 };
 
 class ShaderCompiler {
-public:
-  static Expected<std::unique_ptr<ShaderCompiler>, vk::Result> create();
-  ~ShaderCompiler();
+  public:
+    static Expected<std::unique_ptr<ShaderCompiler>, vk::Result> create();
+    ~ShaderCompiler();
 
-  CompileResult compile(const std::string &source,
-                        const std::string &entryPoint, ShaderStage stage,
-                        uint32_t subgroupSize = 32);
+    CompileResult compile(const std::string& source, const std::string& entryPoint,
+                          ShaderStage stage, uint32_t subgroupSize = 32);
 
-private:
-  ShaderCompiler();
+  private:
+    ShaderCompiler();
 
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+    struct Impl;
+    std::unique_ptr<Impl> _impl;
 };
 
 } // namespace pictor

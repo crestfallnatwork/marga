@@ -1,37 +1,37 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Author: Himanshu Gupta <himanshu3@iisc.ac.in>
 
-#include "clipp.h"
 #include "bfs.hpp"
-#include "csr.hpp"
 #include "bfs_validation.hpp"
+#include "clipp.h"
+#include "csr.hpp"
 #include "pictor_core/context/context.hpp"
 
+#include <chrono>
+#include <cstdint>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <string>
 #include <vector>
-#include <fstream>
-#include <cstdint>
-#include <chrono>
-#include <numeric>
-#include <iomanip>
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
     using namespace clipp;
-    
+
     std::string graph_file;
     uint32_t src_vertex = 0;
     std::string vertices_file;
     bool validate = false;
 
-    auto cli = (
-        value("graph file", graph_file),
-        (
-            (option("-s", "--src") & value("source vertex", src_vertex)) % "source vertex to start BFS from" |
-            (option("-f", "--file") & value("vertices file", vertices_file)) % "file containing source vertices (one per line)"
-        ),
-        option("-v", "--validate").set(validate) % "validate GPU results against parallel CPU BFS"
-    );
+    auto cli = (value("graph file", graph_file),
+                ((option("-s", "--src") & value("source vertex", src_vertex)) %
+                     "source vertex to start BFS from" |
+                 (option("-f", "--file") & value("vertices file", vertices_file)) %
+                     "file containing source vertices (one per line)"),
+                option("-v", "--validate").set(validate) %
+                    "validate GPU results against parallel CPU BFS");
 
     if (parse(argc, argv, cli)) {
         auto ctx_res = pictor::Context::create();
@@ -43,8 +43,8 @@ int main(int argc, char* argv[]) {
 
         std::cout << "Importing graph: " << graph_file << "..." << std::endl;
         auto import_start = std::chrono::high_resolution_clock::now();
-        auto g = pictor::graphs::Graph::import(ctx, graph_file);
-        auto import_end = std::chrono::high_resolution_clock::now();
+        auto g            = pictor::graphs::Graph::import(ctx, graph_file);
+        auto import_end   = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> import_elapsed = import_end - import_start;
         std::cout << "Import took: " << import_elapsed.count() << "s" << std::endl;
 
@@ -52,7 +52,8 @@ int main(int argc, char* argv[]) {
         if (!vertices_file.empty()) {
             std::ifstream infile(vertices_file);
             uint32_t v;
-            while (infile >> v) sources.push_back(v);
+            while (infile >> v)
+                sources.push_back(v);
         } else {
             sources.push_back(src_vertex);
         }
@@ -65,7 +66,7 @@ int main(int argc, char* argv[]) {
 
         for (uint32_t src : sources) {
             std::cout << "\n--- Source: " << src << " ---" << std::endl;
-            
+
             ctx.wait_idle(); // Ensure GPU is clean before next run
 
             auto [gpu_distances, gpu_t] = bfs.run(g, src);
@@ -77,7 +78,7 @@ int main(int argc, char* argv[]) {
                 auto [cpu_distances, cpu_t] = pictor::graphs::BFSValidator::run(g, src);
                 all_cpu_timings.push_back(cpu_t);
                 std::cout << "CPU Total: " << cpu_t.traversal_ms << " ms" << std::endl;
-                
+
                 pictor::graphs::BFSValidator::verify(g, src, gpu_distances, cpu_distances);
             }
         }
@@ -94,13 +95,19 @@ int main(int argc, char* argv[]) {
                 avg.total_ms += t.total_ms;
             }
             double n = static_cast<double>(timings.size());
-            avg.alloc_ms /= n; avg.init_ms /= n; avg.traversal_ms /= n;
-            avg.inner_sync_ms /= n; avg.pci_readback_ms /= n; avg.total_ms /= n;
+            avg.alloc_ms /= n;
+            avg.init_ms /= n;
+            avg.traversal_ms /= n;
+            avg.inner_sync_ms /= n;
+            avg.pci_readback_ms /= n;
+            avg.total_ms /= n;
 
-            std::cout << "\n=== GPU BFS Average Results (" << timings.size() << " runs) ===" << std::endl;
+            std::cout << "\n=== GPU BFS Average Results (" << timings.size()
+                      << " runs) ===" << std::endl;
             std::cout << "  VMA Allocations:     " << avg.alloc_ms << " ms" << std::endl;
             std::cout << "  Initialization (H2D): " << avg.init_ms << " ms" << std::endl;
-            std::cout << "  Traversal (GPU):     " << avg.traversal_ms << " ms (Inner sync: " << avg.inner_sync_ms << " ms)" << std::endl;
+            std::cout << "  Traversal (GPU):     " << avg.traversal_ms
+                      << " ms (Inner sync: " << avg.inner_sync_ms << " ms)" << std::endl;
             std::cout << "  Final PCIe Readback: " << avg.pci_readback_ms << " ms" << std::endl;
             std::cout << "  --------------------------------" << std::endl;
             std::cout << "  AVERAGE TOTAL:       " << avg.total_ms << " ms" << std::endl;
@@ -108,10 +115,12 @@ int main(int argc, char* argv[]) {
 
         auto print_avg_cpu = [&](const std::vector<pictor::graphs::ValidationTimings>& timings) {
             double avg_traversal = 0;
-            for (const auto& t : timings) avg_traversal += t.traversal_ms;
+            for (const auto& t : timings)
+                avg_traversal += t.traversal_ms;
             avg_traversal /= timings.size();
 
-            std::cout << "\n=== CPU BFS Average Results (" << timings.size() << " runs) ===" << std::endl;
+            std::cout << "\n=== CPU BFS Average Results (" << timings.size()
+                      << " runs) ===" << std::endl;
             std::cout << "  Traversal (CPU):     " << avg_traversal << " ms" << std::endl;
         };
 

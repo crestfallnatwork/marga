@@ -9,201 +9,192 @@
 #include <chrono>
 #include <cstdint>
 
-
 namespace pictor {
 namespace graphs {
 
-PageRank::PageRank(Context &ctx) : _ctx(ctx) {
-  reduction.reset(
-      pr_shader::ReduceComputeExecutor::create(_ctx).val().release());
-  pagerank.reset(pagerank_shader::PRExecutor::create(_ctx).val().release());
-  pagerankCompute.reset(
-      pagerank_shader::PageComputeExecutor::create(_ctx).val().release());
-  prc.reset(PagerankCSCExecutor::create(_ctx).val().release());
-  outdegree.reset(OutDegreeExecutor::create(_ctx).val().release());
-  dispatch.reset(DispatchExecutor::create(_ctx).val().release());
-  danglingHandler.reset(DanglingHandler::create(_ctx).val().release());
+PageRank::PageRank(Context& ctx) : _ctx(ctx)
+{
+    reduction.reset(pr_shader::ReduceComputeExecutor::create(_ctx).val().release());
+    pagerank.reset(pagerank_shader::PRExecutor::create(_ctx).val().release());
+    pagerankCompute.reset(pagerank_shader::PageComputeExecutor::create(_ctx).val().release());
+    prc.reset(PagerankCSCExecutor::create(_ctx).val().release());
+    outdegree.reset(OutDegreeExecutor::create(_ctx).val().release());
+    dispatch.reset(DispatchExecutor::create(_ctx).val().release());
+    danglingHandler.reset(DanglingHandler::create(_ctx).val().release());
 }
 
-PageRank::~PageRank() { _cleanup_buffers(); }
-
-void PageRank::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges) {
-  CheckAllocation(past_pr = _ctx.pool_allocator->allocate(
-                      sizeof(float) * (num_vertices + 1), 0));
-  CheckAllocation(current_pr = _ctx.pool_allocator->allocate(
-                      sizeof(float) * (num_vertices + 1), 0));
-  CheckAllocation(_h_pr_results = _ctx.pinned_allocator->allocate(
-                      sizeof(float) * num_vertices, 0));
-  CheckAllocation(indirect_mesh_grid =
-                      _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
-  CheckAllocation(indirect_reduce_grid =
-                      _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
-  CheckAllocation(_d_delta = _ctx.pool_allocator->allocate(sizeof(float), 0));
-  CheckAllocation(_iterations =
-                      _ctx.pool_allocator->allocate(sizeof(uint32_t), 0));
-
-  float init_pr = 1. / num_vertices;
-  uint32_t punned_pr;
-  std::memcpy(&punned_pr, &init_pr, sizeof(float));
-  _ctx.fill(past_pr, punned_pr);
-  _ctx.fill(current_pr, 0);
-  uint32_t punned;
-  float one = 1.;
-  std::memcpy(&punned, &one, sizeof(float));
-  _ctx.fill(_d_delta, punned);
-  _ctx.fill(_iterations, 0);
+PageRank::~PageRank()
+{
+    _cleanup_buffers();
 }
 
-void PageRank::_cleanup_buffers() {
-  _ctx.deallocate(past_pr);
-  _ctx.deallocate(current_pr);
-  _ctx.deallocate(_h_pr_results);
-  _ctx.deallocate(out_degree);
-  _ctx.deallocate(indirect_mesh_grid);
-  _ctx.deallocate(indirect_reduce_grid);
-  _ctx.deallocate(_d_delta);
-  _ctx.deallocate(_iterations);
+void PageRank::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges)
+{
+    CheckAllocation(past_pr = _ctx.pool_allocator->allocate(sizeof(float) * (num_vertices + 1), 0));
+    CheckAllocation(current_pr =
+                        _ctx.pool_allocator->allocate(sizeof(float) * (num_vertices + 1), 0));
+    CheckAllocation(_h_pr_results =
+                        _ctx.pinned_allocator->allocate(sizeof(float) * num_vertices, 0));
+    CheckAllocation(indirect_mesh_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
+    CheckAllocation(indirect_reduce_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
+    CheckAllocation(_d_delta = _ctx.pool_allocator->allocate(sizeof(float), 0));
+    CheckAllocation(_iterations = _ctx.pool_allocator->allocate(sizeof(uint32_t), 0));
+
+    float init_pr = 1. / num_vertices;
+    uint32_t punned_pr;
+    std::memcpy(&punned_pr, &init_pr, sizeof(float));
+    _ctx.fill(past_pr, punned_pr);
+    _ctx.fill(current_pr, 0);
+    uint32_t punned;
+    float one = 1.;
+    std::memcpy(&punned, &one, sizeof(float));
+    _ctx.fill(_d_delta, punned);
+    _ctx.fill(_iterations, 0);
 }
 
-std::pair<std::vector<float>, PageRankTimings>
-PageRank::run(Graph &G, float delta, GraphLayout layout) {
-  using namespace std::chrono_literals;
-  using namespace std::chrono;
-  /* Prequel allocate buffers and zero them */
-  _allocate_buffers(G.num_vertices, G.num_edges);
-  _ctx.fsync();
+void PageRank::_cleanup_buffers()
+{
+    _ctx.deallocate(past_pr);
+    _ctx.deallocate(current_pr);
+    _ctx.deallocate(_h_pr_results);
+    _ctx.deallocate(out_degree);
+    _ctx.deallocate(indirect_mesh_grid);
+    _ctx.deallocate(indirect_reduce_grid);
+    _ctx.deallocate(_d_delta);
+    _ctx.deallocate(_iterations);
+}
 
-  if (layout == GraphLayout::CSC) {
-    auto out_t1 = high_resolution_clock::now();
-    out_degree =
-        _ctx.pool_allocator->allocate(sizeof(uint32_t) * G.num_vertices, 0);
-    _ctx.fill(out_degree, 0);
-    _ctx.barrier(out_degree, Access::TransferWrite, Access::Write);
-    outdegree->record(
-        G.num_vertices, 1, 1,
-        {
-            .row_offsets =
-                reinterpret_cast<uint64_t *>(G.d_row_offsets.address),
-            .column_indices =
-                reinterpret_cast<uint32_t *>(G.d_column_indices.address),
-            .out_degrees = reinterpret_cast<uint32_t *>(out_degree.address),
-            .vertices_n = static_cast<uint32_t>(G.num_vertices),
-        });
+std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float delta,
+                                                             GraphLayout layout)
+{
+    using namespace std::chrono_literals;
+    using namespace std::chrono;
+    /* Prequel allocate buffers and zero them */
+    _allocate_buffers(G.num_vertices, G.num_edges);
     _ctx.fsync();
-    auto out_t2 = high_resolution_clock::now();
-    std::cout << std::format("Out Degree Kernel: {}\n",
-                             duration<double, std::milli>(out_t2 - out_t1));
-  }
 
-  auto times = 0.ms;
-  auto curr = &current_pr;
-  auto past = &past_pr;
-
-  uint batchSize = 25;
-
-  volatile float *h_delta = reinterpret_cast<float *>(_h_pr_results.mappedPtr);
-
-  auto t1 = std::chrono::high_resolution_clock::now();
-  do {
-    for (uint32_t i = 0; i < batchSize; i++) {
-      _ctx.barrier(_iterations, Access::Write, Access::Write);
-      _ctx.barrier(*curr, Access::Write, Access::Write);
-      dispatch->record(
-          1, 1, 1,
-          {
-              .d_delta = reinterpret_cast<float *>(_d_delta.address),
-              .curr_pr = reinterpret_cast<float *>(curr->address),
-              .iterations = reinterpret_cast<uint32_t *>(_iterations.address),
-              .mesh_grid =
-                  reinterpret_cast<uint32_t *>(indirect_mesh_grid.address),
-              .reduce_grid =
-                  reinterpret_cast<uint32_t *>(indirect_reduce_grid.address),
-              .vertices_n = static_cast<uint32_t>(G.num_vertices),
-              .delta = delta,
-          });
-
-      _ctx.barrier(*past, Access::Write, Access::Read);
-
-      _ctx.barrier(indirect_mesh_grid, Access::Write, Access::IndirectRead);
-      prc->record_indirect(
-          indirect_mesh_grid,
-          {
-              .row_offsets =
-                  reinterpret_cast<uint64_t *>(G.d_row_offsets.address),
-              .column_indices =
-                  reinterpret_cast<uint32_t *>(G.d_column_indices.address),
-              .past_pr = reinterpret_cast<float *>(past->address),
-              .curr_pr = reinterpret_cast<float *>(curr->address),
-              .out_degrees = reinterpret_cast<uint32_t *>(out_degree.address),
-              .vertices_n = G.num_vertices,
-              .edges_n = G.num_edges,
-          });
-
-      _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
-      danglingHandler->record_indirect(indirect_reduce_grid, {
-              .past_pr = reinterpret_cast<float *>(past->address),
-              .curr_pr = reinterpret_cast<float *>(curr->address),
-              .out_degree = reinterpret_cast<uint32_t *>(out_degree.address),
-              .vertices_n = G.num_vertices,
-      });
-
-      _ctx.barrier(*curr, Access::Write, Access::Read);
-      _ctx.barrier(_d_delta, Access::Write, Access::Write);
-
-      ReductionIn reductionIn = {
-          .past_pr = reinterpret_cast<float *>(past->address),
-          .current_pr = reinterpret_cast<float *>(curr->address),
-          .d_delta = reinterpret_cast<float *>(_d_delta.address),
-          .delta = delta,
-          .d = 0.85,
-          .vertices_n = G.num_vertices,
-      };
-      reduction->record_indirect(indirect_reduce_grid, reductionIn);
-
-      _ctx.barrier(_d_delta, Access::Write, Access::Read);
-
-      std::swap(curr, past);
+    if (layout == GraphLayout::CSC) {
+        auto out_t1 = high_resolution_clock::now();
+        out_degree  = _ctx.pool_allocator->allocate(sizeof(uint32_t) * G.num_vertices, 0);
+        _ctx.fill(out_degree, 0);
+        _ctx.barrier(out_degree, Access::TransferWrite, Access::Write);
+        outdegree->record(
+            G.num_vertices, 1, 1,
+            {
+                .row_offsets    = reinterpret_cast<uint64_t*>(G.d_row_offsets.address),
+                .column_indices = reinterpret_cast<uint32_t*>(G.d_column_indices.address),
+                .out_degrees    = reinterpret_cast<uint32_t*>(out_degree.address),
+                .vertices_n     = static_cast<uint32_t>(G.num_vertices),
+            });
+        _ctx.fsync();
+        auto out_t2 = high_resolution_clock::now();
+        std::cout << std::format("Out Degree Kernel: {}\n",
+                                 duration<double, std::milli>(out_t2 - out_t1));
     }
-    _ctx.barrier(_d_delta, Access::Write, Access::TransferRead);
-    _ctx.copy(_d_delta, _h_pr_results);
+
+    auto times = 0.ms;
+    auto curr  = &current_pr;
+    auto past  = &past_pr;
+
+    uint batchSize = 25;
+
+    volatile float* h_delta = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    do {
+        for (uint32_t i = 0; i < batchSize; i++) {
+            _ctx.barrier(_iterations, Access::Write, Access::Write);
+            _ctx.barrier(*curr, Access::Write, Access::Write);
+            dispatch->record(
+                1, 1, 1,
+                {
+                    .d_delta     = reinterpret_cast<float*>(_d_delta.address),
+                    .curr_pr     = reinterpret_cast<float*>(curr->address),
+                    .iterations  = reinterpret_cast<uint32_t*>(_iterations.address),
+                    .mesh_grid   = reinterpret_cast<uint32_t*>(indirect_mesh_grid.address),
+                    .reduce_grid = reinterpret_cast<uint32_t*>(indirect_reduce_grid.address),
+                    .vertices_n  = static_cast<uint32_t>(G.num_vertices),
+                    .delta       = delta,
+                });
+
+            _ctx.barrier(*past, Access::Write, Access::Read);
+
+            _ctx.barrier(indirect_mesh_grid, Access::Write, Access::IndirectRead);
+            prc->record_indirect(
+                indirect_mesh_grid,
+                {
+                    .row_offsets    = reinterpret_cast<uint64_t*>(G.d_row_offsets.address),
+                    .column_indices = reinterpret_cast<uint32_t*>(G.d_column_indices.address),
+                    .past_pr        = reinterpret_cast<float*>(past->address),
+                    .curr_pr        = reinterpret_cast<float*>(curr->address),
+                    .out_degrees    = reinterpret_cast<uint32_t*>(out_degree.address),
+                    .vertices_n     = G.num_vertices,
+                    .edges_n        = G.num_edges,
+                });
+
+            _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
+            danglingHandler->record_indirect(
+                indirect_reduce_grid,
+                {
+                    .past_pr    = reinterpret_cast<float*>(past->address),
+                    .curr_pr    = reinterpret_cast<float*>(curr->address),
+                    .out_degree = reinterpret_cast<uint32_t*>(out_degree.address),
+                    .vertices_n = G.num_vertices,
+                });
+
+            _ctx.barrier(*curr, Access::Write, Access::Read);
+            _ctx.barrier(_d_delta, Access::Write, Access::Write);
+
+            ReductionIn reductionIn = {
+                .past_pr    = reinterpret_cast<float*>(past->address),
+                .current_pr = reinterpret_cast<float*>(curr->address),
+                .d_delta    = reinterpret_cast<float*>(_d_delta.address),
+                .delta      = delta,
+                .d          = 0.85,
+                .vertices_n = G.num_vertices,
+            };
+            reduction->record_indirect(indirect_reduce_grid, reductionIn);
+
+            _ctx.barrier(_d_delta, Access::Write, Access::Read);
+
+            std::swap(curr, past);
+        }
+        _ctx.barrier(_d_delta, Access::Write, Access::TransferRead);
+        _ctx.copy(_d_delta, _h_pr_results);
+        _ctx.fsync();
+
+        _ctx.invalidate(_h_pr_results);
+    } while (*h_delta > delta);
+    auto t2 = std::chrono::high_resolution_clock::now();
+    {
+        float del = *h_delta;
+        std::cout << std::format("Last delta: {}", del);
+    }
+
+    _ctx.copy(_iterations, _h_pr_results);
+    _ctx.fsync();
+    _ctx.invalidate(_h_pr_results);
+    volatile auto h_iterations = reinterpret_cast<uint32_t*>(_h_pr_results.mappedPtr);
+    auto iterations            = *h_iterations;
+
+    times = t2 - t1;
+    std::cout << std::format("\nIterations approx: {}, Time: {}, Time/Iteration(approx): {}",
+                             iterations, times, times / iterations)
+              << std::endl;
+    past = (iterations % 2) ? &current_pr : &past_pr;
+    _ctx.copy(*past, _h_pr_results);
     _ctx.fsync();
 
+    std::vector<float> pr;
+    float* pr_results = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
     _ctx.invalidate(_h_pr_results);
-  } while (*h_delta > delta);
-  auto t2 = std::chrono::high_resolution_clock::now();
-  {
-    float del = *h_delta;
-    std::cout << std::format("Last delta: {}", del);
-  }
-
-  _ctx.copy(_iterations, _h_pr_results);
-  _ctx.fsync();
-  _ctx.invalidate(_h_pr_results);
-  volatile auto h_iterations =
-      reinterpret_cast<uint32_t *>(_h_pr_results.mappedPtr);
-  auto iterations = *h_iterations;
-
-  times = t2 - t1;
-  std::cout
-      << std::format(
-             "\nIterations approx: {}, Time: {}, Time/Iteration(approx): {}",
-             iterations, times, times / iterations)
-      << std::endl;
-  past = (iterations % 2) ? &current_pr : &past_pr;
-  _ctx.copy(*past, _h_pr_results);
-  _ctx.fsync();
-
-  std::vector<float> pr;
-  float *pr_results = reinterpret_cast<float *>(_h_pr_results.mappedPtr);
-  _ctx.invalidate(_h_pr_results);
-  for (int i = 0; i < G.num_vertices; i++) {
-    pr.push_back(pr_results[i]);
-  }
-  std::cout << std::format("Pageranks: [1] {}, [2] {}, [3] {}, [4] {}",
-                           pr_results[0], pr_results[1], pr_results[2],
-                           pr_results[3])
-            << std::endl;
-  return {pr, {}};
+    for (int i = 0; i < G.num_vertices; i++) {
+        pr.push_back(pr_results[i]);
+    }
+    std::cout << std::format("Pageranks: [1] {}, [2] {}, [3] {}, [4] {}", pr_results[0],
+                             pr_results[1], pr_results[2], pr_results[3])
+              << std::endl;
+    return {pr, {}};
 }
 
 } // namespace graphs
