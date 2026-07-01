@@ -41,5 +41,10 @@ struct AllocationInfo {
     };
 
     Allocator* alloc = nullptr;
+
+    template <typename T>
+    operator T*() const{
+        return reinterpret_cast<T*>(address);
+    }
 };
 } // namespace pictor

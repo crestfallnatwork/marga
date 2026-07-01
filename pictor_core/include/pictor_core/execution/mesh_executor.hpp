@@ -140,6 +140,16 @@ class MeshExecutor : public BaseExecutor<TParams, TResources> {
         stream->record(_direct_record_cb, &params);
     }
 
+    void record_raw(uint32_t x, uint32_t y, uint32_t z, const TParams& pushConstants,
+                    StreamHandle handle = cDefaultStream)
+    {
+        Stream* stream = this->ctx->get_stream(handle);
+        if (!stream)
+            return;
+        DirectParams params = {this, pushConstants, x, y, z};
+        stream->record(_direct_record_cb, &params);
+    }
+
     void record_indirect(const AllocationInfo& indirectBuffer, const TParams& pushConstants,
                          StreamHandle handle = cDefaultStream)
     {
