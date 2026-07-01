@@ -29,8 +29,15 @@ pictor_add_shader(pr_shader src/shaders/pr.slang)
 add_library(pictor_graphs_pr src/pagerank.cpp)
 target_link_libraries(pictor_graphs_pr pr_shader)
 
+pictor_add_shader(tc_shader src/shaders/tc.slang)
+add_library(pictor_graphs_tc src/tc.cpp)
+target_link_libraries(pictor_graphs_tc tc_shader)
+
 add_executable(bfs src/bfs_main.cpp)
 target_link_libraries(bfs pictor_graphs pictor_core pictor_graphs_bfs)
 
 add_executable(pagerank src/pagerank_main.cpp)
 target_link_libraries(pagerank pictor_graphs pictor_core pictor_graphs_pr)
+
+add_executable(tc src/tc_main.cpp)
+target_link_libraries(tc pictor_graphs pictor_core pictor_graphs_tc)
