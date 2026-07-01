@@ -6,7 +6,6 @@
 #include "csr.hpp"
 #include "pictor_core/context/context.hpp"
 
-#include "pagerank.shader.h"
 #include "pr.shader.h"
 
 #include <vector>
