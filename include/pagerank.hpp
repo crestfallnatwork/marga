@@ -6,7 +6,6 @@
 #include "csr.hpp"
 #include "pictor_core/context/context.hpp"
 
-#include "pagerank.shader.h"
 #include "pr.shader.h"
 
 #include <vector>
@@ -35,10 +34,6 @@ class PageRank {
 
     std::unique_ptr<pr_shader::ReduceComputeExecutor> reduction;
     using ReductionIn = pr_shader::ReductionIn;
-
-    std::unique_ptr<pagerank_shader::PageComputeExecutor> pagerankCompute;
-    std::unique_ptr<pagerank_shader::PRExecutor> pagerank;
-    using PageRankIn = pagerank_shader::PageRankIn;
 
     using PagerankCSCExecutor = pr_shader::PRCExecutor;
     std::unique_ptr<PagerankCSCExecutor> prc;
