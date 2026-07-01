@@ -34,7 +34,6 @@
 #include "pictor_core/context/context.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <fcntl.h>
 #include <iostream>
@@ -171,14 +170,16 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
     g.num_vertices = num_vertices;
     g.layout       = target_layout;
 
-    std::vector<std::atomic<uint64_t>> degrees(num_vertices + 1);
-    for (auto& d : degrees)
-        d.store(0);
-
     unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) num_threads = 1;
+    
+    // Allocate local degrees for each thread to avoid atomic contention
+    std::vector<std::vector<uint64_t>> local_degrees(
+        num_threads, std::vector<uint64_t>(num_vertices + 1, 0));
+
     std::vector<std::thread> threads;
 
-    auto process_chunk_count = [&](const char* c_start, const char* c_end) {
+    auto process_chunk_count = [&](const char* c_start, const char* c_end, unsigned int tid) {
         const char* ptr = c_start;
         while (ptr < c_end) {
             uint64_t u, v;
@@ -195,17 +196,17 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
 
             if (target_layout == GraphLayout::CSC) {
                 if (v > 0 && v <= num_vertices)
-                    degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                    local_degrees[tid][v - 1]++;
                 if (force_symmetric && u != v) {
                     if (u > 0 && u <= num_vertices)
-                        degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                        local_degrees[tid][u - 1]++;
                 }
             } else {
                 if (u > 0 && u <= num_vertices)
-                    degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                    local_degrees[tid][u - 1]++;
                 if (force_symmetric && u != v) {
                     if (v > 0 && v <= num_vertices)
-                        degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                        local_degrees[tid][v - 1]++;
                 }
             }
         }
@@ -225,7 +226,7 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
             c_end = end;
 
         if (c_start < c_end)
-            threads.emplace_back(process_chunk_count, c_start, c_end);
+            threads.emplace_back(process_chunk_count, c_start, c_end, i);
     }
 
     for (auto& t : threads)
@@ -238,10 +239,17 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
     g.row_offsets =
         std::span<uint64_t>(static_cast<uint64_t*>(g.h_row_offsets.mappedPtr), num_vertices + 1);
 
+    // Calculate prefix sums and thread-specific starting positions
+    std::vector<std::vector<uint64_t>> thread_write_positions(
+        num_threads, std::vector<uint64_t>(num_vertices + 1, 0));
+
     uint64_t current_offset = 0;
     for (uint64_t i = 0; i < num_vertices; ++i) {
         g.row_offsets[i] = current_offset;
-        current_offset += degrees[i].load(std::memory_order_relaxed);
+        for (unsigned int t = 0; t < num_threads; ++t) {
+            thread_write_positions[t][i] = current_offset;
+            current_offset += local_degrees[t][i];
+        }
     }
     g.row_offsets[num_vertices] = current_offset;
     g.num_edges                 = current_offset;
@@ -252,13 +260,8 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
     g.column_indices =
         std::span<uint32_t>(static_cast<uint32_t*>(g.h_column_indices.mappedPtr), g.num_edges);
 
-    // Use atomic counters for filling column indices in parallel
-    // Reuse degrees vector to store current fill positions (relative to
-    // row_offsets[i])
-    for (auto& d : degrees)
-        d.store(0);
 
-    auto process_chunk_fill = [&](const char* c_start, const char* c_end) {
+    auto process_chunk_fill = [&](const char* c_start, const char* c_end, unsigned int tid) {
         const char* ptr = c_start;
         while (ptr < c_end) {
             uint64_t u, v;
@@ -275,27 +278,23 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
 
             if (target_layout == GraphLayout::CSC) {
                 if (v > 0 && v <= num_vertices) {
-                    uint64_t pos          = g.row_offsets[v - 1] +
-                                            degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                    uint64_t pos          = thread_write_positions[tid][v - 1]++;
                     g.column_indices[pos] = (uint32_t)(u - 1);
                 }
                 if (force_symmetric && u != v) {
                     if (u > 0 && u <= num_vertices) {
-                        uint64_t pos = g.row_offsets[u - 1] +
-                                       degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                        uint64_t pos          = thread_write_positions[tid][u - 1]++;
                         g.column_indices[pos] = (uint32_t)(v - 1);
                     }
                 }
             } else {
                 if (u > 0 && u <= num_vertices) {
-                    uint64_t pos          = g.row_offsets[u - 1] +
-                                            degrees[u - 1].fetch_add(1, std::memory_order_relaxed);
+                    uint64_t pos          = thread_write_positions[tid][u - 1]++;
                     g.column_indices[pos] = (uint32_t)(v - 1);
                 }
                 if (force_symmetric && u != v) {
                     if (v > 0 && v <= num_vertices) {
-                        uint64_t pos = g.row_offsets[v - 1] +
-                                       degrees[v - 1].fetch_add(1, std::memory_order_relaxed);
+                        uint64_t pos          = thread_write_positions[tid][v - 1]++;
                         g.column_indices[pos] = (uint32_t)(u - 1);
                     }
                 }
@@ -315,7 +314,7 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
             c_end = end;
 
         if (c_start < c_end)
-            threads.emplace_back(process_chunk_fill, c_start, c_end);
+            threads.emplace_back(process_chunk_fill, c_start, c_end, i);
     }
 
     for (auto& t : threads)
