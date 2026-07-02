@@ -45,12 +45,6 @@
 #include <unistd.h>
 #include <vector>
 
-#ifdef PICTOR_USE_FMM
-#include <fast_matrix_market/fast_matrix_market.hpp>
-#include <fast_matrix_market/app/triplet.hpp>
-#include <fstream>
-#endif
-
 namespace pictor {
 namespace graphs {
 
@@ -161,136 +155,6 @@ void Graph::load_from_binary(const std::string& prefix)
     throw std::string{"not implemented"};
 }
 
-#ifdef PICTOR_USE_FMM
-Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
-                    GraphLayout target_layout)
-{
-    std::ifstream instream(file);
-    if (!instream.is_open()) {
-        throw std::runtime_error("Could not open file: " + file);
-    }
-    fast_matrix_market::read_options options;
-    // We can read the header first to see if it's symmetric
-    fast_matrix_market::matrix_market_header header;
-    fast_matrix_market::read_header(instream, header);
-    
-    bool force_symmetric = symmetrize || (header.symmetry != fast_matrix_market::general);
-    options.generalize_symmetry = force_symmetric;
-    options.generalize_symmetry_app = force_symmetric;
-    
-    instream.clear();
-    instream.seekg(0);
-    
-    uint32_t nrows, ncols;
-    std::vector<uint32_t> rows, cols;
-    std::vector<int8_t> vals; 
-    
-    auto t_start = std::chrono::high_resolution_clock::now();
-    fast_matrix_market::read_matrix_market_triplet(instream, nrows, ncols, rows, cols, vals, options);
-    auto t_read = std::chrono::high_resolution_clock::now();
-    
-    Graph g(&ctx);
-    g.num_vertices = std::max(nrows, ncols);
-    g.layout = target_layout;
-    g.num_edges = rows.size();
-    
-    g.h_row_offsets = ctx.pinned_allocator->allocate((g.num_vertices + 1) * sizeof(uint64_t), alignof(uint64_t));
-    g.row_offsets = std::span<uint64_t>(static_cast<uint64_t*>(g.h_row_offsets.mappedPtr), g.num_vertices + 1);
-    
-    g.h_column_indices = ctx.pinned_allocator->allocate(g.num_edges * sizeof(uint32_t), alignof(uint32_t));
-    g.column_indices = std::span<uint32_t>(static_cast<uint32_t*>(g.h_column_indices.mappedPtr), g.num_edges);
-    
-    unsigned int num_threads = std::thread::hardware_concurrency();
-    if (num_threads == 0) num_threads = 1;
-    
-    std::vector<std::vector<uint64_t>> local_degrees(
-        num_threads, std::vector<uint64_t>(g.num_vertices + 1, 0));
-
-    std::vector<std::thread> threads;
-
-    auto process_chunk_count = [&](size_t start_edge, size_t end_edge, unsigned int tid) {
-        for (size_t i = start_edge; i < end_edge; ++i) {
-            uint32_t u = rows[i];
-            uint32_t v = cols[i];
-            if (target_layout == GraphLayout::CSC) {
-                local_degrees[tid][v]++;
-            } else {
-                local_degrees[tid][u]++;
-            }
-        }
-    };
-
-    size_t chunk_size = g.num_edges / num_threads;
-    for (unsigned int i = 0; i < num_threads; ++i) {
-        size_t start = i * chunk_size;
-        size_t end = (i == num_threads - 1) ? g.num_edges : (i + 1) * chunk_size;
-        threads.emplace_back(process_chunk_count, start, end, i);
-    }
-    for (auto& t : threads) t.join();
-    threads.clear();
-
-    std::vector<std::vector<uint64_t>> thread_write_positions(
-        num_threads, std::vector<uint64_t>(g.num_vertices + 1, 0));
-
-    uint64_t current_offset = 0;
-    for (uint64_t i = 0; i < g.num_vertices; ++i) {
-        g.row_offsets[i] = current_offset;
-        for (unsigned int t = 0; t < num_threads; ++t) {
-            thread_write_positions[t][i] = current_offset;
-            current_offset += local_degrees[t][i];
-        }
-    }
-    g.row_offsets[g.num_vertices] = current_offset;
-
-    auto process_chunk_fill = [&](size_t start_edge, size_t end_edge, unsigned int tid) {
-        for (size_t i = start_edge; i < end_edge; ++i) {
-            uint32_t u = rows[i];
-            uint32_t v = cols[i];
-            if (target_layout == GraphLayout::CSC) {
-                g.column_indices[thread_write_positions[tid][v]++] = u;
-            } else {
-                g.column_indices[thread_write_positions[tid][u]++] = v;
-            }
-        }
-    };
-
-    for (unsigned int i = 0; i < num_threads; ++i) {
-        size_t start = i * chunk_size;
-        size_t end = (i == num_threads - 1) ? g.num_edges : (i + 1) * chunk_size;
-        threads.emplace_back(process_chunk_fill, start, end, i);
-    }
-    for (auto& t : threads) t.join();
-    auto t_topology = std::chrono::high_resolution_clock::now();
-    
-    uint64_t row_offset_n = (g.num_vertices + 1);
-    uint64_t row_offset_n_padded = row_offset_n;
-    CheckAllocation(g.d_row_offsets = ctx.pool_allocator->allocate(
-                        row_offset_n_padded * sizeof(uint64_t), alignof(uint64_t)));
-    CheckAllocation(g.d_column_indices =
-                        ctx.pool_allocator->allocate(g.h_column_indices.size, alignof(uint32_t)));
-
-    StreamHandle stream = ctx.create_stream();
-    ctx.copy(g.h_row_offsets, g.d_row_offsets, stream);
-    ctx.copy(g.h_column_indices, g.d_column_indices, stream);
-
-    uint64_t toFill = (row_offset_n_padded - row_offset_n) * sizeof(uint64_t);
-    if (toFill > 0) {
-        ctx.fill(g.d_row_offsets, row_offset_n * sizeof(uint64_t), toFill,
-                 std::numeric_limits<uint32_t>::max(), stream);
-    }
-    ctx.submit(stream);
-    ctx.sync(stream);
-
-    auto t_upload = std::chrono::high_resolution_clock::now();
-    
-    std::cout << "FMM Read Time: " << std::chrono::duration<double, std::milli>(t_read - t_start).count() << "ms\n";
-    std::cout << "Topology Build Time: " << std::chrono::duration<double, std::milli>(t_topology - t_read).count() << "ms\n";
-    std::cout << "Device Upload Time: " << std::chrono::duration<double, std::milli>(t_upload - t_topology).count() << "ms\n";
-
-    return g;
-}
-
-#else
 
 Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
                     GraphLayout target_layout)
@@ -561,7 +425,5 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
 
     return g;
 }
-#endif
-
 } // namespace graphs
 } // namespace pictor

@@ -12,15 +12,6 @@ endif()
 
 find_package(OpenMP REQUIRED)
 
-include(FetchContent)
-FetchContent_Declare(
-        fast_matrix_market
-        GIT_REPOSITORY https://github.com/alugowski/fast_matrix_market
-        GIT_TAG v1.7.6
-        GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(fast_matrix_market)
-
 add_subdirectory(pictor_core)
 
 include_directories(include)
@@ -28,8 +19,7 @@ include_directories(external)
 
 add_library(pictor_graphs src/csr.cpp)
 
-target_link_libraries(pictor_graphs pictor_core fast_matrix_market::fast_matrix_market
-  OpenMP::OpenMP_CXX)
+target_link_libraries(pictor_graphs pictor_core OpenMP::OpenMP_CXX)
 
 pictor_add_shader(bfs_shader src/shaders/bfs.slang)
 add_library(pictor_graphs_bfs src/bfs.cpp src/bfs_validation.cpp)
@@ -51,4 +41,3 @@ target_link_libraries(pagerank pictor_graphs pictor_core pictor_graphs_pr)
 
 add_executable(tc src/tc_main.cpp)
 target_link_libraries(tc pictor_graphs pictor_core pictor_graphs_tc)
-add_compile_definitions(PICTOR_USE_FMM)
