@@ -109,8 +109,8 @@ void tc_mesh(
         }
     }
 
-    uint32_t *s_list;
-    uint32_t *b_list;
+    uint64_t s_offset;
+    uint64_t b_offset;
     uint32_t b_size;
 
     uint64_t global_eid = inPayload.edge_start + local_eid;
@@ -119,23 +119,23 @@ void tc_mesh(
     uint n_v = tcIn.list_offset[v+1] - tcIn.list_offset[v];
     uint n_u = tcIn.list_offset[u+1] - tcIn.list_offset[u];
     if(n_u < n_v) {
-        s_list = Splice(tcIn.edge_lists, tcIn.list_offset[u]);
-        b_list = Splice(tcIn.edge_lists, tcIn.list_offset[v]);
+        s_offset = tcIn.list_offset[u];
+        b_offset = tcIn.list_offset[v];
         b_size = n_v;
     } else {
-        s_list = Splice(tcIn.edge_lists, tcIn.list_offset[v]);
-        b_list = Splice(tcIn.edge_lists, tcIn.list_offset[u]);
+        s_offset = tcIn.list_offset[v];
+        b_offset = tcIn.list_offset[u];
         b_size = n_u;
     }
 
     uint64_t local_w_idx = threadId - inPayload.offsets[local_eid];
-    uint w = At(s_list, local_w_idx);
+    uint w = At(tcIn.edge_lists, local_w_idx + s_offset);
     if(w > v) {
         uint low = 0;
         uint high = b_size;
         while(low < high) {
             uint mid = low + (high-low)/2;
-            uint mid_val = At(b_list, mid);
+            uint mid_val = At(tcIn.edge_lists, mid + b_offset);
             if(mid_val < w) {
                 low = mid + 1;
             } else if(w < mid_val) {
