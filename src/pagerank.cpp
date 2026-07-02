@@ -15,8 +15,6 @@ namespace graphs {
 PageRank::PageRank(Context& ctx) : _ctx(ctx)
 {
     reduction.reset(pr_shader::ReduceComputeExecutor::create(_ctx).val().release());
-    pagerank.reset(pagerank_shader::PRExecutor::create(_ctx).val().release());
-    pagerankCompute.reset(pagerank_shader::PageComputeExecutor::create(_ctx).val().release());
     prc.reset(PagerankCSCExecutor::create(_ctx).val().release());
     outdegree.reset(OutDegreeExecutor::create(_ctx).val().release());
     dispatch.reset(DispatchExecutor::create(_ctx).val().release());
