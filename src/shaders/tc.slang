@@ -60,7 +60,7 @@ void tc_task(
         while(eid >= tcIn.list_offset[u+1]) {
             u++;
         }
-        uint v = tcIn.edge_lists[eid];
+        uint v = At(tcIn.edge_lists, eid);
         if(u < v) {
             uint n_v = tcIn.list_offset[v+1] - tcIn.list_offset[v];
             uint n_u = tcIn.list_offset[u+1] - tcIn.list_offset[u];
