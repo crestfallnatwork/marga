@@ -319,6 +319,86 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
 
     for (auto& t : threads)
         t.join();
+        
+    auto t_read = std::chrono::high_resolution_clock::now();
+
+    // Sort and unique each adjacency list in parallel
+    std::vector<uint64_t> unique_degrees(num_vertices, 0);
+    
+    auto process_dedup = [&](uint64_t start_v, uint64_t end_v) {
+        std::vector<uint32_t> scratch;
+        for (uint64_t v = start_v; v < end_v; ++v) {
+            uint64_t start_edge = g.row_offsets[v];
+            uint64_t end_edge = g.row_offsets[v + 1];
+            if (end_edge > start_edge) {
+                size_t len = end_edge - start_edge;
+                scratch.resize(len);
+                // Copy to cached RAM for fast random access
+                std::copy(g.column_indices.begin() + start_edge, 
+                          g.column_indices.begin() + end_edge, 
+                          scratch.begin());
+                          
+                std::sort(scratch.begin(), scratch.end());
+                auto last = std::unique(scratch.begin(), scratch.end());
+                size_t unique_len = std::distance(scratch.begin(), last);
+                unique_degrees[v] = unique_len;
+                
+                // Write back unique elements sequentially
+                std::copy(scratch.begin(), scratch.begin() + unique_len, 
+                          g.column_indices.begin() + start_edge);
+            }
+        }
+    };
+
+    std::vector<uint64_t> thread_v_starts(num_threads + 1, 0);
+    thread_v_starts[num_threads] = num_vertices;
+    uint64_t edges_per_thread = g.num_edges / num_threads;
+    uint64_t current_acc = 0;
+    unsigned int current_thread = 1;
+    for (uint64_t i = 0; i < num_vertices; ++i) {
+        current_acc += g.row_offsets[i+1] - g.row_offsets[i];
+        if (current_acc >= current_thread * edges_per_thread && current_thread < num_threads) {
+            thread_v_starts[current_thread] = i + 1;
+            current_thread++;
+        }
+    }
+
+    threads.clear();
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        uint64_t start = thread_v_starts[i];
+        uint64_t end = thread_v_starts[i+1];
+        if (start < end)
+            threads.emplace_back(process_dedup, start, end);
+    }
+    for (auto& t : threads) t.join();
+    
+    // Prefix sum the new true degrees
+    std::vector<uint64_t> old_row_offsets(g.row_offsets.begin(), g.row_offsets.end());
+    uint64_t true_edges = 0;
+    for (uint64_t i = 0; i < num_vertices; ++i) {
+        g.row_offsets[i] = true_edges;
+        true_edges += unique_degrees[i];
+    }
+    g.row_offsets[num_vertices] = true_edges;
+    g.num_edges = true_edges;
+
+    // Shift sequentially to prevent data races
+    for (uint64_t v = 0; v < num_vertices; ++v) {
+        uint64_t old_start = old_row_offsets[v];
+        uint64_t new_start = g.row_offsets[v];
+        uint64_t count = unique_degrees[v];
+        if (old_start != new_start && count > 0) {
+            // Safe to copy because new_start <= old_start
+            // and we are iterating sequentially (left to right)
+            std::copy(g.column_indices.begin() + old_start, 
+                      g.column_indices.begin() + old_start + count, 
+                      g.column_indices.begin() + new_start);
+        }
+    }
+    
+    // Shift complete.
+    
+    auto t_topology = std::chrono::high_resolution_clock::now();
 
     // Upload to device
     //
