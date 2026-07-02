@@ -94,8 +94,6 @@ uint64_t TC::run(Graph const& g)
         ctx.invalidate(h_result);
         total_count += *res;
     }
-    std::cout << std::format("edge start: {}, total_tasks_left: {}, x: {}, y: {}", edge_start,
-                             total_tasks_left, tasks_left_x, tasks_left_y) << std::endl;
     if (total_tasks_left) {
         tc->record_raw(tasks_left_x, tasks_left_y, 1,
                        {
