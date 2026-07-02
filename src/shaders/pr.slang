@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Author: Himanshu Gupta <himanshu3@iisc.ac.in>
 
-/*
- * 
- */
-
 static const uint cMaxMeshDim = 65535;
 
 struct SharedReductionTile {
@@ -177,7 +173,7 @@ struct DanglingSharedTile {
     float32_t partials[1024/WAVE_SIZE];
 }
 groupshared DanglingSharedTile danglingTile;
-/* handle nodes with zero degree - in or out*/
+/* handle nodes with zero out degree*/
 // @bind(dangling)
 [[vk::push_constant]]
 uniform DanglingIn danglingIn;
