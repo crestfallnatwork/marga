@@ -293,8 +293,13 @@ vk::Result Context::_create_logical_device()
     std::vector<const char*> deviceExtensions = {
         VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
         VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME};
+
+    vk::PhysicalDeviceShaderSubgroupExtendedTypesFeatures extTypes = {};
+    extTypes.shaderSubgroupExtendedTypes = VK_TRUE;
+
     vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures;
     atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
+    atomicFloatFeatures.pNext = &extTypes;
 
     vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures;
     meshFeatures.meshShader = VK_TRUE;
