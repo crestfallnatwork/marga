@@ -52,11 +52,11 @@ void reduce(uint32_t threadId : SV_DispatchThreadID,
     GroupMemoryBarrierWithGroupSync();
 
     if(sgid == 0) {
-        float32_t parital_error = 0;
+        float32_t partial_error = 0;
         if(lid < 1024/WaveGetLaneCount()) {
-            parital_error = reductionTile.partial_errors[lid];
+            partial_error = reductionTile.partial_errors[lid];
         }
-        delta = WaveActiveSum(parital_error);
+        delta = WaveActiveSum(partial_error);
         if(WaveIsFirstLane()) {
             InterlockedAdd(*reduceIn->d_delta, delta);
         }
