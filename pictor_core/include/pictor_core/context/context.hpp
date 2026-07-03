@@ -56,6 +56,11 @@ class Context {
     void flush(AllocationInfo& alloc);
     void deallocate(AllocationInfo& alloc);
 
+    size_t get_device_free_memory();
+    size_t get_host_free_memory();
+    void set_host_allocator(Allocator* allocator);
+    void set_device_allocator(Allocator* allocator);
+
     vk::Instance instance;
     vk::PhysicalDevice physical_device;
     vk::Device device;
@@ -66,8 +71,12 @@ class Context {
     vma::Allocator vma_allocator;
     uint32_t subgroup_size{32};
 
-    std::unique_ptr<PinnedMemoryAllocator> pinned_allocator;
-    std::unique_ptr<PoolAllocator> pool_allocator;
+    Allocator* pinned_allocator;
+    Allocator* pool_allocator;
+
+    std::unique_ptr<PinnedMemoryAllocator> root_pinned_allocator;
+    std::unique_ptr<PoolAllocator> root_pool_allocator;
+
     std::unique_ptr<ShaderCompiler> shader_compiler;
 
   private:

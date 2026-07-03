@@ -18,10 +18,7 @@ enum class AllocationType : uint8_t {
 struct Allocator;
 struct AllocationInfo {
     vk::Result res;
-    union {
-        vk::Buffer buffer{VK_NULL_HANDLE};
-        vk::Image image;
-    };
+    vk::Buffer buffer{VK_NULL_HANDLE};
     union {
         vma::Allocation allocation{VK_NULL_HANDLE};
         vma::VirtualAllocation vAlloc;
@@ -32,13 +29,7 @@ struct AllocationInfo {
     size_t offset{0};
     AllocationType type{AllocationType::eBuffer};
 
-    union {
-        VkDeviceAddress address{0};
-        struct {
-            VkImageView view;
-            VkImageLayout layout;
-        } img;
-    };
+    VkDeviceAddress address{0};
 
     Allocator* alloc = nullptr;
 

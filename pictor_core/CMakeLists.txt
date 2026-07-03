@@ -36,6 +36,7 @@ add_library(pictor_core
     src/execution/shader_compiler.cpp
     src/memory/pool_allocator.cpp
     src/memory/pinned_memory_allocator.cpp
+    src/memory/heap_allocator.cpp
 )
 
 target_include_directories(pictor_core
@@ -62,7 +63,7 @@ set(PICTOR_CORE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "")
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PictorCoreUtils.cmake)
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-    add_executable(library_test src/library_test_main.cpp)
+    add_executable(library_test test/test.cpp)
     target_link_libraries(library_test 
         PRIVATE 
             pictor_core

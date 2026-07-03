@@ -29,8 +29,8 @@ Context::~Context()
 {
     wait_idle();
     _streams.clear();
-    pinned_allocator.reset();
-    pool_allocator.reset();
+    root_pinned_allocator.reset();
+    root_pool_allocator.reset();
 
     if (device) {
         vma_allocator.destroy();
@@ -143,6 +143,63 @@ void Context::invalidate(AllocationInfo& info)
 void Context::flush(AllocationInfo& info)
 {
     info.alloc->flush(info);
+}
+
+size_t Context::get_device_free_memory()
+{
+    auto mem_props = vma_allocator.getMemoryProperties();
+    auto budgets   = vma_allocator.getHeapBudgets();
+    size_t usage   = 0;
+    size_t budget  = 0;
+    for (uint i = 0; i < budgets.size(); i++) {
+        if (!(mem_props->memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
+            continue;
+        }
+        usage += budgets[i].usage;
+        budget += budgets[i].budget;
+    }
+    return (budget - usage);
+}
+
+size_t Context::get_host_free_memory()
+{
+    auto mem_props = vma_allocator.getMemoryProperties();
+    auto budgets   = vma_allocator.getHeapBudgets();
+    size_t usage   = 0;
+    size_t budget  = 0;
+    for (uint i = 0; i < budgets.size(); i++) {
+        if ((mem_props->memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
+            continue;
+        }
+        usage += budgets[i].usage;
+        budget += budgets[i].budget;
+    }
+    /* UMA fallback */
+    if (budget == 0) {
+        uint uma_heap = std::numeric_limits<uint>::max();
+        for (uint i = 0; i < mem_props->memoryTypeCount; i++) {
+            if (!(mem_props->memoryTypes[i].propertyFlags &
+                  vk::MemoryPropertyFlagBits::eHostVisible)) {
+                continue;
+            }
+            uma_heap = mem_props->memoryTypes[i].heapIndex;
+            break;
+        }
+
+        assert(uma_heap < budgets.size());
+        usage  = budgets[uma_heap].usage;
+        budget = budgets[uma_heap].budget;
+    }
+    return budget > usage ? (budget - usage) : 0;
+}
+
+void Context::set_host_allocator(Allocator* allocator)
+{
+    pinned_allocator = allocator;
+}
+void Context::set_device_allocator(Allocator* allocator)
+{
+    pool_allocator = allocator;
 }
 
 vk::Result Context::_init()
@@ -292,14 +349,15 @@ vk::Result Context::_create_logical_device()
 
     std::vector<const char*> deviceExtensions = {
         VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
-        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME};
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
+        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME};
 
     vk::PhysicalDeviceShaderSubgroupExtendedTypesFeatures extTypes = {};
-    extTypes.shaderSubgroupExtendedTypes = VK_TRUE;
+    extTypes.shaderSubgroupExtendedTypes                           = VK_TRUE;
 
     vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures;
     atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
-    atomicFloatFeatures.pNext = &extTypes;
+    atomicFloatFeatures.pNext                        = &extTypes;
 
     vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures;
     meshFeatures.meshShader = VK_TRUE;
@@ -359,7 +417,8 @@ vk::Result Context::_setup_vma()
     vulkanFunctions.vkGetDeviceProcAddr   = vkGetDeviceProcAddr;
 
     vma::AllocatorCreateInfo allocatorInfo{};
-    allocatorInfo.flags            = vma::AllocatorCreateFlagBits::eBufferDeviceAddress;
+    allocatorInfo.flags            = vma::AllocatorCreateFlagBits::eBufferDeviceAddress |
+                                     vma::AllocatorCreateFlagBits::eExtMemoryBudget;
     allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
     allocatorInfo.physicalDevice   = physical_device;
     allocatorInfo.device           = device;
@@ -375,8 +434,10 @@ vk::Result Context::_setup_vma()
 
 vk::Result Context::_setup_allocators()
 {
-    pinned_allocator = std::make_unique<PinnedMemoryAllocator>(this);
-    pool_allocator   = std::make_unique<PoolAllocator>(this);
+    root_pinned_allocator = std::make_unique<PinnedMemoryAllocator>(this);
+    root_pool_allocator   = std::make_unique<PoolAllocator>(this);
+    set_device_allocator(root_pool_allocator.get());
+    set_host_allocator(root_pinned_allocator.get());
     return vk::Result::eSuccess;
 }
 
