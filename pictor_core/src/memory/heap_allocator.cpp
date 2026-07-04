@@ -12,6 +12,7 @@ HeapAllocator::create(Context* ctx, Allocator* underlying, size_t max_heap_size)
     std::unique_ptr<HeapAllocator> heap_allocator{new HeapAllocator};
     heap_allocator->_ctx                  = ctx;
     heap_allocator->_underlying_allocator = underlying;
+    max_heap_size = ((max_heap_size + 15)/16) * 16;
     AllocationInfo underlying_allocation =
         heap_allocator->_underlying_allocator->allocate(max_heap_size, 0);
     if (underlying_allocation.res != vk::Result::eSuccess) {
@@ -29,7 +30,7 @@ HeapAllocator::create(Context* ctx, Allocator* underlying, size_t max_heap_size)
 HeapAllocator::~HeapAllocator()
 {
     _ctx->deallocate(_underlying_allocation);
-    if (_block){
+    if (_block) {
         _block.clearVirtualBlock();
         _block.destroy();
     }
@@ -37,9 +38,10 @@ HeapAllocator::~HeapAllocator()
 
 AllocationInfo HeapAllocator::allocate(size_t bytes, size_t alignment)
 {
-    if(alignment == 0) alignment = 1;
+    if (alignment == 0)
+        alignment = 1;
     vma::VirtualAllocationCreateInfo info;
-    alignment = (alignment + 15) / 16; /*align the alignment to 16 byte boundary*/
+    alignment = ((alignment + 15) / 16) * 16; /*align the alignment to 16 byte boundary*/
     info.setSize(bytes);
     info.setAlignment(alignment);
     size_t offset;
@@ -49,7 +51,7 @@ AllocationInfo HeapAllocator::allocate(size_t bytes, size_t alignment)
         alloc.res = v_alloc.result;
         return alloc;
     }
-    alloc.alloc = this;
+    alloc.alloc  = this;
     alloc.vAlloc = v_alloc.value;
     alloc.size   = bytes;
     alloc.offset = offset;
