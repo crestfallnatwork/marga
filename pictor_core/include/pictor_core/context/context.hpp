@@ -58,8 +58,8 @@ class Context {
 
     size_t get_device_free_memory();
     size_t get_host_free_memory();
-    void set_host_allocator(Allocator* allocator);
-    void set_device_allocator(Allocator* allocator);
+    void set_host_allocator(std::unique_ptr<Allocator>&& allocator);
+    void set_device_allocator(std::unique_ptr<Allocator>&& allocator);
 
     vk::Instance instance;
     vk::PhysicalDevice physical_device;

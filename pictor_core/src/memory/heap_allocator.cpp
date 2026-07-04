@@ -35,6 +35,7 @@ HeapAllocator::~HeapAllocator()
 
 AllocationInfo HeapAllocator::allocate(size_t bytes, size_t alignment)
 {
+    if(alignment == 0) alignment = 1;
     vma::VirtualAllocationCreateInfo info;
     alignment = (alignment + 15) / 16; /*align the alignment to 16 byte boundary*/
     info.setSize(bytes);
@@ -46,6 +47,7 @@ AllocationInfo HeapAllocator::allocate(size_t bytes, size_t alignment)
         alloc.res = v_alloc.result;
         return alloc;
     }
+    alloc.alloc = this;
     alloc.vAlloc = v_alloc.value;
     alloc.size   = bytes;
     alloc.offset = offset;

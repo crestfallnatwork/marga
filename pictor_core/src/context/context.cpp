@@ -29,6 +29,10 @@ Context::~Context()
 {
     wait_idle();
     _streams.clear();
+
+    set_device_allocator(std::unique_ptr<Allocator>{nullptr});
+    set_host_allocator(std::unique_ptr<Allocator>{nullptr});
+
     root_pinned_allocator.reset();
     root_pool_allocator.reset();
 
@@ -193,13 +197,19 @@ size_t Context::get_host_free_memory()
     return budget > usage ? (budget - usage) : 0;
 }
 
-void Context::set_host_allocator(Allocator* allocator)
+void Context::set_host_allocator(std::unique_ptr<Allocator>&& allocator)
 {
-    pinned_allocator = allocator;
+    if (pinned_allocator != root_pinned_allocator.get()) {
+        delete pinned_allocator;
+    }
+    pinned_allocator = allocator.release();
 }
-void Context::set_device_allocator(Allocator* allocator)
+void Context::set_device_allocator(std::unique_ptr<Allocator>&& allocator)
 {
-    pool_allocator = allocator;
+    if (pool_allocator != root_pool_allocator.get()) {
+        delete pool_allocator;
+    }
+    pool_allocator = allocator.release();
 }
 
 vk::Result Context::_init()
@@ -436,8 +446,8 @@ vk::Result Context::_setup_allocators()
 {
     root_pinned_allocator = std::make_unique<PinnedMemoryAllocator>(this);
     root_pool_allocator   = std::make_unique<PoolAllocator>(this);
-    set_device_allocator(root_pool_allocator.get());
-    set_host_allocator(root_pinned_allocator.get());
+    pool_allocator = root_pool_allocator.get();
+    pinned_allocator = root_pinned_allocator.get();
     return vk::Result::eSuccess;
 }
 

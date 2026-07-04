@@ -46,15 +46,20 @@ int main()
     auto dev_allocator  = std::move(dev_allocator_res.val());
     auto host_allocator = std::move(host_allocator_res.val());
 
+    ctx->set_host_allocator(std::move(host_allocator));
+    ctx->set_device_allocator(std::move(dev_allocator));
+
     for(int i = 0; i < 100; i++) {
         t1                = std::chrono::high_resolution_clock::now();
-        auto alloc_dev    = dev_allocator->allocate(32, 1);
+        auto alloc_dev    = ctx->pool_allocator->allocate(32, 1);
         t2                = std::chrono::high_resolution_clock::now();
         t_dev_allocation  += (t2 - t1);
         t1                = std::chrono::high_resolution_clock::now();
-        auto alloc_host   = host_allocator->allocate(32, 1);
+        auto alloc_host   = ctx->pinned_allocator->allocate(32, 1);
         t2                = std::chrono::high_resolution_clock::now();
         t_host_allocation += (t2 - t1);
+        ctx->deallocate(alloc_dev);
+        ctx->deallocate(alloc_host);
     }
 
     std::cout << std::format(std::locale("en_US.UTF-8"),
