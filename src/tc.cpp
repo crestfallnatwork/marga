@@ -35,27 +35,9 @@ uint64_t TC::run(Graph const& g)
 
     init_buffers();
 
-    // auto starting_points = ctx.pool_allocator->allocate(g.num_vertices * sizeof(uint32_t), 0);
-    // auto edges_n = ctx.pool_allocator->allocate(sizeof(uint32_t), 0);
-    // edgeSum->record(g.num_vertices, 1, 1,
-    //                 {
-    //                     .list_offset  = g.d_row_offsets,
-    //                     .edge_lists   = g.d_column_indices,
-    //                     .new_edge_sum = edges_n,
-    //                     .starting_points = starting_points,
-    //                     .num_vertices = (uint32_t)g.num_vertices,
-    //                 });
-
-    // ctx.fsync();
-    // auto t2_degree = high_resolution_clock::now();
-    // degree_time = t2_degree - t1_degree;
-    //
     volatile uint32_t* res    = reinterpret_cast<uint32_t*>(h_result.mappedPtr);
     uint32_t const cBatchSize = 1 << 24;
     uint64_t total_count      = 0;
-
-    auto tc_time        = 0.s;
-    auto t1_tc          = high_resolution_clock::now();
 
     uint32_t total_tasks = (cBatchSize + tc->taskWgX - 1) / tc->taskWgX;
     uint32_t tasks_x     = total_tasks;
@@ -113,11 +95,7 @@ uint64_t TC::run(Graph const& g)
         ctx.invalidate(h_result);
         total_count += *res;
     }
-    auto t2_tc = high_resolution_clock::now();
-    tc_time    = t2_tc - t1_tc;
-    std::cout << std::format("TC took: {}\n", tc_time);
-    std::cout << std::format("TC: {}\n", total_count);
-    return *res;
+    return total_count;
 }
 
 } // namespace graphs
