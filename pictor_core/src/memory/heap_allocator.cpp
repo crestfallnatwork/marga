@@ -18,6 +18,8 @@ HeapAllocator::create(Context* ctx, Allocator* underlying, size_t max_heap_size)
         return underlying_allocation.res;
     }
     heap_allocator->_underlying_allocation = underlying_allocation;
+    ctx->fill(underlying_allocation, 0);
+    ctx->fsync();
     vma::VirtualBlockCreateInfo vb_cr_info;
     vb_cr_info.size        = max_heap_size;
     heap_allocator->_block = vma::createVirtualBlock(vb_cr_info).value;
