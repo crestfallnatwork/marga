@@ -4,6 +4,7 @@
 #include "clipp.h"
 #include "csr.hpp"
 #include "pictor_core/context/context.hpp"
+#include "pictor_core/memory/heap_allocator.hpp"
 #include "tc.hpp"
 
 #include <algorithm>
@@ -35,9 +36,21 @@ int main(int argc, char* argv[])
         std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
         auto g =
             pictor::graphs::Graph::import(ctx, graph_file, true, pictor::graphs::GraphLayout::CSR);
+
+        size_t free_mem    = ctx.get_device_free_memory() * 0.95;
+        auto dev_allocator = std::move(
+            pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val());
+        auto host_allocator = std::move(
+            pictor::HeapAllocator::create(&ctx, ctx.root_pinned_allocator.get(), free_mem).val());
+
+        ctx.set_device_allocator(std::move(dev_allocator));
+        ctx.set_host_allocator(std::move(host_allocator));
+
         pictor::graphs::TC tc(ctx);
         tc.run(g);
         if (validate) {}
+        dev_allocator.reset();
+        host_allocator.reset();
 
     } else {
         std::cout << make_man_page(cli, argv[0]);

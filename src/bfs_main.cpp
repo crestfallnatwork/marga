@@ -6,6 +6,7 @@
 #include "clipp.h"
 #include "csr.hpp"
 #include "pictor_core/context/context.hpp"
+#include "pictor_core/memory/heap_allocator.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -57,6 +58,12 @@ int main(int argc, char* argv[])
         } else {
             sources.push_back(src_vertex);
         }
+
+        size_t free_mem = ctx.get_device_free_memory() * 0.95;
+        ctx.set_device_allocator(std::move(
+            pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val()));
+        ctx.set_host_allocator(std::move(
+            pictor::HeapAllocator::create(&ctx, ctx.root_pinned_allocator.get(), free_mem).val()));
 
         pictor::graphs::BFS bfs(ctx);
         std::vector<pictor::graphs::BFSTimings> all_gpu_timings;
@@ -110,7 +117,7 @@ int main(int argc, char* argv[])
                       << " ms (Inner sync: " << avg.inner_sync_ms << " ms)" << std::endl;
             std::cout << "  Final PCIe Readback: " << avg.pci_readback_ms << " ms" << std::endl;
             std::cout << "  --------------------------------" << std::endl;
-            std::cout << "  AVERAGE TOTAL:       " << avg.total_ms << " ms" << std::endl;
+            std::cout << "  AVERAGE TOTAL:       " << avg.total_ms - avg.pci_readback_ms << " ms" << std::endl;
         };
 
         auto print_avg_cpu = [&](const std::vector<pictor::graphs::ValidationTimings>& timings) {
