@@ -50,16 +50,18 @@ int main(int argc, char* argv[])
 
         auto tc_time = 0.s;
         uint64_t res = 0;
+        std::cout << std::format("Running {} iterations...\n", iterations);
         for (uint i = 0; i < iterations; i++) {
+            std::cout << std::format("Running iteration {}...\n", i+1);
             pictor::graphs::TC tc(ctx);
             auto t1      = high_resolution_clock::now();
             res = tc.run(g);
             auto t2      = high_resolution_clock::now();
             tc_time += t2 - t1;
+            std::cout << std::format("    TC: {}\n", res);
             ctx.wait_idle();
         }
         std::cout << std::format("TC Took: {}\n", tc_time / iterations);
-        std::cout << std::format("TC: {}\n", res);
         if (validate) {
             std::cout << "validation not implemented yet\n";
         }
