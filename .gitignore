@@ -36,11 +36,6 @@ cmake_install.cmake
 *.sysinfo.txt
 results/
 
-# Exclude datasets and externals
-datasets/
-externals/
-
 # clangd cache
 .cache
 temp
-vertices*
