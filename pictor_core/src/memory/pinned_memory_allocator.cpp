@@ -30,7 +30,7 @@ AllocationInfo PinnedMemoryAllocator::allocate(PinnedMemoryAllocatorParams const
 
     vma::AllocationCreateInfo localAllocInfo{};
     localAllocInfo.usage = vma::MemoryUsage::eAutoPreferHost;
-    localAllocInfo.flags = vma::AllocationCreateFlagBits::eHostAccessSequentialWrite |
+    localAllocInfo.flags = vma::AllocationCreateFlagBits::eHostAccessRandom |
                            vma::AllocationCreateFlagBits::eMapped;
 
     vk::BufferCreateInfo bufferInfo{};
