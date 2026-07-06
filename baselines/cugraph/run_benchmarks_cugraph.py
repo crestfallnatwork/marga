@@ -3,20 +3,44 @@ import subprocess
 import random
 import re
 
-# Configuration
-GRAPHS = [
-    "com-Orkut",
-    # Add other graphs below:
-    # "com-Friendster",
-    # "kron_g500-logn21",
-    # "soc-LiveJournal1",
+# Edit this list to add/remove graphs from the benchmark suite
+
+ROAD_NETWORKS = [
+    "GAP-road",
+    # "europe_osm",
+]
+
+SOCIAL_NETWORKS = [
+    "soc-LiveJournal1",
+    # "hollywood-2009",
+    # "com-Orkut",
     # "soc-twitter-2010",
-    # "GAP-kron",
-    # "GAP-road",
     # "GAP-twitter",
+    # "com-Friendster",
+]
+
+SYNTHETIC = [
+    "delaunay_n24",
+    # "kron_g500-logn21",
+    # "GAP-kron",
     # "GAP-urand",
+]
+
+WEB_CRAWLS = [
+    "indochina-2004",
+    # "uk-2005",
+    # "webbase-2001",
+    # "it-2004",
     # "GAP-web",
 ]
+
+MISC = [
+    "kmer_V1r",
+    # "mawi_201512020330",
+    # "nlpkkt240",
+]
+
+GRAPHS = ROAD_NETWORKS + SOCIAL_NETWORKS + WEB_CRAWLS + SYNTHETIC + MISC
 
 NUM_RUNS = 5
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
