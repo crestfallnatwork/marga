@@ -115,7 +115,6 @@ int main(int argc, char** argv) {
     }
     
     rmm::device_uvector<vertex_t> bfs_distances(h_graph.num_vertices, stream);
-    rmm::device_uvector<vertex_t> bfs_predecessors(h_graph.num_vertices, stream);
     rmm::device_uvector<vertex_t> d_start(1, stream);
 
     // Warm up the GPU
@@ -123,7 +122,7 @@ int main(int argc, char** argv) {
     for (vertex_t src_vertex : source_vertices) {
         raft::update_device(d_start.data(), &src_vertex, 1, stream);
         cugraph::bfs<vertex_t, edge_t, false>(
-            handle, view, bfs_distances.data(), bfs_predecessors.data(),
+            handle, view, bfs_distances.data(), nullptr,
             d_start.data(), 1, false, std::numeric_limits<vertex_t>::max(), false);
     }
     handle.sync_stream();
@@ -136,7 +135,7 @@ int main(int argc, char** argv) {
 
         float ms_bfs = time_gpu_ms(handle, [&]() {
             cugraph::bfs<vertex_t, edge_t, false>(
-                handle, view, bfs_distances.data(), bfs_predecessors.data(),
+                handle, view, bfs_distances.data(), nullptr,
                 d_start.data(), 1, false, std::numeric_limits<vertex_t>::max(), false);
         });
 
