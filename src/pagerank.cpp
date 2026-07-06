@@ -99,6 +99,7 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
     volatile float* h_delta = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
 
     auto t1 = std::chrono::high_resolution_clock::now();
+    uint32_t current_iter = 0;
     do {
         for (uint32_t i = 0; i < batchSize; i++) {
             _ctx.barrier(_iterations, Access::Write, Access::Write);
@@ -128,6 +129,7 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
                     .out_degrees    = reinterpret_cast<uint32_t*>(out_degree.address),
                     .vertices_n     = G.num_vertices,
                     .edges_n        = G.num_edges,
+                    .iter           = current_iter,
                 });
 
             _ctx.barrier(indirect_reduce_grid, Access::Write, Access::IndirectRead);
@@ -150,12 +152,15 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
                 .delta      = delta,
                 .d          = 0.85,
                 .vertices_n = G.num_vertices,
+                .out_degrees = reinterpret_cast<uint32_t*>(out_degree.address),
+                .is_restore_mode = 0,
             };
             reduction->record_indirect(indirect_reduce_grid, reductionIn);
 
             _ctx.barrier(_d_delta, Access::Write, Access::Read);
 
             std::swap(curr, past);
+            current_iter++;
         }
         _ctx.barrier(_d_delta, Access::Write, Access::TransferRead);
         _ctx.copy(_d_delta, _h_pr_results);
@@ -163,6 +168,7 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
 
         _ctx.invalidate(_h_pr_results);
     } while (*h_delta > delta);
+
     auto t2 = std::chrono::high_resolution_clock::now();
     {
         float del = *h_delta;
@@ -180,6 +186,23 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
                              iterations, times, times / iterations)
               << std::endl;
     past = (iterations % 2) ? &current_pr : &past_pr;
+
+    // Final restoration kernel to multiply by out_degrees
+    _ctx.barrier(*past, Access::Write, Access::Write);
+    ReductionIn finalReductionIn = {
+        .past_pr    = reinterpret_cast<float*>(past->address),
+        .current_pr = reinterpret_cast<float*>(past->address), // unused
+        .d_delta    = reinterpret_cast<float*>(_d_delta.address), // unused
+        .delta      = delta,
+        .d          = 0.85,
+        .vertices_n = G.num_vertices,
+        .out_degrees = reinterpret_cast<uint32_t*>(out_degree.address),
+        .is_restore_mode = 1,
+    };
+    reduction->record(G.num_vertices, 1, 1, finalReductionIn);
+    _ctx.barrier(*past, Access::Write, Access::TransferRead);
+    _ctx.fsync();
+
     _ctx.copy(*past, _h_pr_results);
     _ctx.fsync();
 

@@ -15,6 +15,8 @@ struct ReductionIn {
     float32_t delta;
     float32_t d;
     uint64_t vertices_n;
+    uint32_t* out_degrees;
+    uint32_t is_restore_mode;
 }
 // @bind(reduce)
 [[vk::push_constant]]
@@ -27,14 +29,29 @@ void reduce(uint32_t threadId : SV_DispatchThreadID,
 ) {
     float delta = 0.;
     if(threadId < reduceIn.vertices_n)  {
+        if (reduceIn.is_restore_mode == 1) {
+            uint32_t out_deg = reduceIn.out_degrees[threadId];
+            if (out_deg > 0) {
+                reduceIn.past_pr[threadId] *= out_deg;
+            }
+            return;
+        }
+
         float dangling = reduceIn.current_pr[reduceIn.vertices_n]/reduceIn.vertices_n;
         float cur_pr = reduceIn.current_pr[threadId];
         cur_pr = (1 - reduceIn.d)/reduceIn.vertices_n +
                 reduceIn.d*(cur_pr + dangling);
 
-        delta = abs(reduceIn.past_pr[threadId] - cur_pr);
+        uint32_t out_deg = reduceIn.out_degrees[threadId];
+        float old_pr = reduceIn.past_pr[threadId];
+        if (out_deg > 0) old_pr *= out_deg;
 
-        reduceIn.current_pr[threadId] = cur_pr;
+        delta = abs(old_pr - cur_pr);
+
+        float pull_val = cur_pr;
+        if (out_deg > 0) pull_val /= out_deg;
+
+        reduceIn.current_pr[threadId] = pull_val;
         reduceIn.past_pr[threadId] = 0;
 
     }
@@ -67,6 +84,7 @@ struct PageRankCSCIn{
     uint32_t *out_degrees;
     uint64_t vertices_n;
     uint64_t edges_n;
+    uint32_t iter;
 };
 
 struct SharedPRCPayload {
@@ -137,7 +155,8 @@ void prc_mesh(
         }
 
         uint src = *((uint32_t*)(((uint64_t)prIn.column_indices + edge_offset*4ull)));
-        pull = prIn.past_pr[src]/prIn.out_degrees[src];
+        if (prIn.iter == 0) pull = prIn.past_pr[src]/prIn.out_degrees[src];
+        else pull = prIn.past_pr[src];
     }
 
     for (uint offset = 1; offset < WAVE_SIZE; offset *= 2) {
