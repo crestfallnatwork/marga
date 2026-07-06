@@ -67,12 +67,14 @@ def ensure_vertices_file(graph_name):
     return vertices_file
 
 def run_command(cmd):
-    """Runs a shell command and returns stdout."""
+    """Runs a shell command and returns stdout and a success flag."""
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if result.returncode != 0:
-        print(f"Error running command: {' '.join(cmd)}")
-        print(result.stdout)
-    return result.stdout
+        print(f"Command failed (likely OOM or crash): {' '.join(cmd)}")
+        print("Last 500 characters of output:")
+        print(result.stdout[-500:])
+        return result.stdout, False
+    return result.stdout, True
 
 def parse_pr(output):
     match = re.search(r"Overall average PageRank time:\s+([\d\.]+)\s+ms", output)
@@ -105,20 +107,20 @@ def main():
         # 1. PageRank
         print(f"Running cuGraph PageRank...")
         pr_cmd = [os.path.join(BUILD_DIR, "pagerank"), mtx_path]
-        pr_out = run_command(pr_cmd)
-        results[graph]['PR'] = parse_pr(pr_out)
+        pr_out, pr_ok = run_command(pr_cmd)
+        results[graph]['PR'] = parse_pr(pr_out) if pr_ok else "OOM"
         
         # 2. Triangle Counting
         print(f"Running cuGraph TC...")
         tc_cmd = [os.path.join(BUILD_DIR, "tc"), mtx_path]
-        tc_out = run_command(tc_cmd)
-        results[graph]['TC'] = parse_tc(tc_out)
+        tc_out, tc_ok = run_command(tc_cmd)
+        results[graph]['TC'] = parse_tc(tc_out) if tc_ok else "OOM"
         
         # 3. BFS
         print(f"Running cuGraph BFS (64 sources)...")
         bfs_cmd = [os.path.join(BUILD_DIR, "bfs"), "-f", vertices_file, mtx_path]
-        bfs_out = run_command(bfs_cmd)
-        results[graph]['BFS'] = parse_bfs(bfs_out)
+        bfs_out, bfs_ok = run_command(bfs_cmd)
+        results[graph]['BFS'] = parse_bfs(bfs_out) if bfs_ok else "OOM"
         
         print(f"Results for {graph}: PR={results[graph]['PR']}ms, TC={results[graph]['TC']}ms, BFS={results[graph]['BFS']}ms")
 
@@ -127,9 +129,9 @@ def main():
     print("| Graph | PageRank (ms) | TC (ms) | BFS (ms) |")
     print("|---|---|---|---|")
     for graph, res in results.items():
-        pr_val = f"{res['PR']:.2f}" if res['PR'] is not None else "N/A"
-        tc_val = f"{res['TC']:.2f}" if res['TC'] is not None else "N/A"
-        bfs_val = f"{res['BFS']:.2f}" if res['BFS'] is not None else "N/A"
+        pr_val = f"{res['PR']:.2f}" if isinstance(res['PR'], float) else (str(res['PR']) if res['PR'] else "N/A")
+        tc_val = f"{res['TC']:.2f}" if isinstance(res['TC'], float) else (str(res['TC']) if res['TC'] else "N/A")
+        bfs_val = f"{res['BFS']:.2f}" if isinstance(res['BFS'], float) else (str(res['BFS']) if res['BFS'] else "N/A")
         print(f"| {graph} | {pr_val} | {tc_val} | {bfs_val} |")
 
 if __name__ == "__main__":
