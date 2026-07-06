@@ -62,15 +62,10 @@ void PageRank::_cleanup_buffers()
     _ctx.deallocate(_iterations);
 }
 
-std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float delta,
-                                                             GraphLayout layout)
+void PageRank::compute_out_degree(Graph& G, GraphLayout layout)
 {
     using namespace std::chrono_literals;
     using namespace std::chrono;
-    /* Prequel allocate buffers and zero them */
-    _allocate_buffers(G.num_vertices, G.num_edges);
-    _ctx.fsync();
-
     if (layout == GraphLayout::CSC) {
         auto out_t1 = high_resolution_clock::now();
         out_degree  = _ctx.pool_allocator->allocate(sizeof(uint32_t) * G.num_vertices, 0);
@@ -85,12 +80,15 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
                 .vertices_n     = static_cast<uint32_t>(G.num_vertices),
             });
         _ctx.fsync();
-        auto out_t2 = high_resolution_clock::now();
-        std::cout << std::format("Out Degree Kernel: {}\n",
-                                 duration<double, std::milli>(out_t2 - out_t1));
     }
+}
 
-    auto times = 0.ms;
+uint32_t PageRank::run(Graph& G, float delta)
+{
+    /* Prequel allocate buffers and zero them */
+    _allocate_buffers(G.num_vertices, G.num_edges);
+    _ctx.fsync();
+
     auto curr  = &current_pr;
     auto past  = &past_pr;
 
@@ -165,26 +163,15 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
         _ctx.barrier(_d_delta, Access::Write, Access::TransferRead);
         _ctx.copy(_d_delta, _h_pr_results);
         _ctx.fsync();
-
         _ctx.invalidate(_h_pr_results);
     } while (*h_delta > delta);
-
-    auto t2 = std::chrono::high_resolution_clock::now();
-    {
-        float del = *h_delta;
-        std::cout << std::format("Last delta: {}", del);
-    }
 
     _ctx.copy(_iterations, _h_pr_results);
     _ctx.fsync();
     _ctx.invalidate(_h_pr_results);
     volatile auto h_iterations = reinterpret_cast<uint32_t*>(_h_pr_results.mappedPtr);
-    auto iterations            = *h_iterations;
+    uint32_t iterations        = *h_iterations;
 
-    times = t2 - t1;
-    std::cout << std::format("\nIterations approx: {}, Time: {}, Time/Iteration(approx): {}",
-                             iterations, times, times / iterations)
-              << std::endl;
     past = (iterations % 2) ? &current_pr : &past_pr;
 
     // Final restoration kernel to multiply by out_degrees
@@ -203,19 +190,20 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
     _ctx.barrier(*past, Access::Write, Access::TransferRead);
     _ctx.fsync();
 
-    _ctx.copy(*past, _h_pr_results);
+    _final_pr = past;
+    
+    return iterations;
+}
+
+std::vector<float> PageRank::copy_to_host(uint32_t num_vertices)
+{
+    _ctx.copy(*_final_pr, _h_pr_results);
     _ctx.fsync();
 
-    std::vector<float> pr;
     float* pr_results = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
     _ctx.invalidate(_h_pr_results);
-    for (int i = 0; i < G.num_vertices; i++) {
-        pr.push_back(pr_results[i]);
-    }
-    std::cout << std::format("Pageranks: [1] {}, [2] {}, [3] {}, [4] {}", pr_results[0],
-                             pr_results[1], pr_results[2], pr_results[3])
-              << std::endl;
-    return {pr, {}};
+    std::vector<float> pr(pr_results, pr_results + num_vertices);
+    return pr;
 }
 
 } // namespace graphs

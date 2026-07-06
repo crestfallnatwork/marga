@@ -13,21 +13,14 @@
 namespace pictor {
 namespace graphs {
 
-struct PageRankTimings {
-    double init_ms          = 0;
-    double preprocessing_ms = 0;
-    double iteration_avg_ms = 0;
-    double total_ms         = 0;
-    uint32_t num_iterations = 0;
-};
-
 class PageRank {
   public:
     PageRank(Context& ctx);
     ~PageRank();
 
-    std::pair<std::vector<float>, PageRankTimings> run(Graph& g, float delta,
-                                                       GraphLayout layout = GraphLayout::CSR);
+    void compute_out_degree(Graph& g, GraphLayout layout = GraphLayout::CSR);
+    uint32_t run(Graph& g, float delta);
+    std::vector<float> copy_to_host(uint32_t num_vertices);
 
   private:
     Context& _ctx;
@@ -59,6 +52,8 @@ class PageRank {
     AllocationInfo _iterations;
     AllocationInfo indirect_mesh_grid;
     AllocationInfo indirect_reduce_grid;
+    
+    AllocationInfo* _final_pr = nullptr;
 
     void _allocate_buffers(uint64_t num_vertices, uint64_t num_edges);
     void _cleanup_buffers();

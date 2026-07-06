@@ -5,20 +5,25 @@
 #include "csr.hpp"
 #include "pagerank.hpp"
 #include "pictor_core/context/context.hpp"
+#include "pictor_core/memory/heap_allocator.hpp"
 
 #include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
+#include <chrono>
 
 int main(int argc, char* argv[])
 {
     using namespace clipp;
 
     std::string graph_file;
+    uint32_t num_runs = 1;
     bool validate = false;
 
     auto cli = group(value("graph file", graph_file) % "MTX graph file to process",
+                     (option("-n", "--num-runs") & value("number of runs", num_runs)) %
+                         "number of times to run the benchmark",
                      option("-v", "--validate").set(validate) %
                          "validate GPU results against parallel CPU PageRank");
 
@@ -36,9 +41,50 @@ int main(int argc, char* argv[])
             std::cout << "Importing graph as CSC: " << graph_file << "..." << std::endl;
             auto g = pictor::graphs::Graph::import(ctx, graph_file, false,
                                                    pictor::graphs::GraphLayout::CSC);
+            
+            size_t free_mem = ctx.get_device_free_memory() * 0.95;
+            ctx.set_device_allocator(std::move(
+                pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val()));
+            ctx.set_host_allocator(std::move(
+                pictor::HeapAllocator::create(&ctx, ctx.root_pinned_allocator.get(), free_mem).val()));
+
             pictor::graphs::PageRank pr(ctx);
-            auto [pr_res, _] = pr.run(g, 1e-4, pictor::graphs::GraphLayout::CSC);
-            pr_gpu           = std::move(pr_res);
+            pr.compute_out_degree(g, pictor::graphs::GraphLayout::CSC);
+            
+            double total_time_ms = 0;
+            double total_time_per_iter = 0;
+            uint32_t total_pr_iters = 0;
+            
+            std::cout << "Running PageRank " << num_runs << " times...\n";
+
+            for (uint32_t run = 0; run < num_runs; run++) {
+                ctx.wait_idle(); // Ensure GPU is clean before next run
+
+                auto run_start = std::chrono::high_resolution_clock::now();
+                uint32_t iterations = pr.run(g, 1e-4);
+                auto run_end = std::chrono::high_resolution_clock::now();
+                
+                double time_ms = std::chrono::duration<double, std::milli>(run_end - run_start).count();
+                double time_per_iter = time_ms / iterations;
+                
+                std::cout << "Run " << run + 1 << " - PR Run Total: " << time_ms 
+                          << " ms, Iterations: " << iterations 
+                          << ", Time/Iter: " << time_per_iter << " ms\n";
+                          
+                total_time_ms += time_ms;
+                total_time_per_iter += time_per_iter;
+                total_pr_iters += iterations;
+                
+                if (run == num_runs - 1) {
+                    pr_gpu = pr.copy_to_host(g.num_vertices);
+                }
+            }
+            
+            std::cout << "\n=== Average Results (" << num_runs << " runs) ===\n";
+            std::cout << "  Average PR Run Total: " << total_time_ms / num_runs << " ms\n";
+            std::cout << "  Average Time/Iter:    " << total_time_per_iter / num_runs << " ms\n";
+            std::cout << "  Average Iterations:   " << static_cast<double>(total_pr_iters) / num_runs << "\n";
+            std::cout << "======================================\n\n";
         }
 
         if (validate) {

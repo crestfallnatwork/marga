@@ -19,12 +19,13 @@ int main(int argc, char* argv[])
 
     std::string graph_file;
     bool validate   = false;
-    uint iterations = 5;
+    uint32_t num_runs = 1;
 
     auto cli = group(value("graph file", graph_file) % "MTX graph file to process",
+                     (option("-n", "--num-runs") & value("number of runs", num_runs)) %
+                         "number of times to run the benchmark",
                      option("-v", "--validate").set(validate) %
-                         "validate GPU results against parallel CPU TC",
-                     option("-i", "--iterations").set(iterations) % "number of iterations to run");
+                         "validate GPU results against parallel CPU TC");
 
     if (parse(argc, argv, cli)) {
         auto ctx_res = pictor::Context::create();
@@ -48,20 +49,27 @@ int main(int argc, char* argv[])
         ctx.set_device_allocator(std::move(dev_allocator));
         ctx.set_host_allocator(std::move(host_allocator));
 
-        auto tc_time = 0.s;
+        double total_time_ms = 0;
         uint64_t res = 0;
-        std::cout << std::format("Running {} iterations...\n", iterations);
-        for (uint i = 0; i < iterations; i++) {
-            std::cout << std::format("Running iteration {}...\n", i+1);
+        
+        std::cout << "Running TC " << num_runs << " times...\n";
+        for (uint32_t run = 0; run < num_runs; run++) {
             pictor::graphs::TC tc(ctx);
-            auto t1      = high_resolution_clock::now();
+            
+            auto t1 = high_resolution_clock::now();
             res = tc.run(g);
-            auto t2      = high_resolution_clock::now();
-            tc_time += t2 - t1;
-            std::cout << std::format("    TC: {}\n", res);
+            auto t2 = high_resolution_clock::now();
+            
+            double time_ms = duration<double, std::milli>(t2 - t1).count();
+            std::cout << "Run " << run + 1 << " - TC Run Total: " << time_ms << " ms, Output: " << res << "\n";
+            
+            total_time_ms += time_ms;
             ctx.wait_idle();
         }
-        std::cout << std::format("TC Took: {}\n", tc_time / iterations);
+        
+        std::cout << "\n=== Average Results (" << num_runs << " runs) ===\n";
+        std::cout << "  Average TC Run Total: " << total_time_ms / num_runs << " ms\n";
+        std::cout << "======================================\n\n";
         if (validate) {
             std::cout << "validation not implemented yet\n";
         }
