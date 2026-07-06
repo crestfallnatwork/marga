@@ -146,13 +146,13 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
             _ctx.barrier(_d_delta, Access::Write, Access::Write);
 
             ReductionIn reductionIn = {
-                .past_pr    = reinterpret_cast<float*>(past->address),
-                .current_pr = reinterpret_cast<float*>(curr->address),
-                .d_delta    = reinterpret_cast<float*>(_d_delta.address),
-                .delta      = delta,
-                .d          = 0.85,
-                .vertices_n = G.num_vertices,
-                .out_degrees = reinterpret_cast<uint32_t*>(out_degree.address),
+                .past_pr         = reinterpret_cast<float*>(past->address),
+                .current_pr      = reinterpret_cast<float*>(curr->address),
+                .d_delta         = reinterpret_cast<float*>(_d_delta.address),
+                .delta           = delta,
+                .d               = 0.85,
+                .vertices_n      = G.num_vertices,
+                .out_degrees     = reinterpret_cast<uint32_t*>(out_degree.address),
                 .is_restore_mode = 0,
             };
             reduction->record_indirect(indirect_reduce_grid, reductionIn);
@@ -190,13 +190,13 @@ std::pair<std::vector<float>, PageRankTimings> PageRank::run(Graph& G, float del
     // Final restoration kernel to multiply by out_degrees
     _ctx.barrier(*past, Access::Write, Access::Write);
     ReductionIn finalReductionIn = {
-        .past_pr    = reinterpret_cast<float*>(past->address),
-        .current_pr = reinterpret_cast<float*>(past->address), // unused
-        .d_delta    = reinterpret_cast<float*>(_d_delta.address), // unused
-        .delta      = delta,
-        .d          = 0.85,
-        .vertices_n = G.num_vertices,
-        .out_degrees = reinterpret_cast<uint32_t*>(out_degree.address),
+        .past_pr         = reinterpret_cast<float*>(past->address),
+        .current_pr      = reinterpret_cast<float*>(past->address),    // unused
+        .d_delta         = reinterpret_cast<float*>(_d_delta.address), // unused
+        .delta           = delta,
+        .d               = 0.85,
+        .vertices_n      = G.num_vertices,
+        .out_degrees     = reinterpret_cast<uint32_t*>(out_degree.address),
         .is_restore_mode = 1,
     };
     reduction->record(G.num_vertices, 1, 1, finalReductionIn);
