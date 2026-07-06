@@ -10,10 +10,22 @@ T* Splice<T>(T* ptr, uint64_t offset) {
     return (T*)(uint64_t(ptr) + sizeof(T) * offset);
 }
 
+uint64_t UpperBound<T>(T* arr, uint64_t low, uint64_t high, IFunc<bool, T> greater )
+{
+    while(high > low) {
+        uint64_t mid = low + (high - low)/2;
+        if(greater(At(arr, mid))) {
+            high = mid;
+        }
+        else low = mid + 1;
+    }
+    return low;
+}
+
 struct SharedTCPayload {
-    uint offsets[WAVE_SIZE+1];
-    uint u[WAVE_SIZE];
     uint64_t edge_start;
+    uint32_t u_start;
+    uint offsets[WAVE_SIZE+1];
 };
 groupshared SharedTCPayload tcPayload;
 
@@ -51,6 +63,7 @@ void tc_task(
             }
         }
         u = low - 1;
+        tcPayload.u_start = u;
     }
 
     uint candidates = 0;
@@ -62,13 +75,15 @@ void tc_task(
         }
         uint v = At(tcIn.edge_lists, eid);
         if(u < v) {
-            uint n_v = tcIn.list_offset[v+1] - tcIn.list_offset[v];
-            uint n_u = tcIn.list_offset[u+1] - tcIn.list_offset[u];
+            uint64_t v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
+                                        tcIn.list_offset[v+1],
+                                        (uint32_t vertex) => (vertex > v));
+            uint n_v = tcIn.list_offset[v+1] - v_start;
+            uint n_u = tcIn.list_offset[u+1] - (eid + 1);
             candidates = min(n_v, n_u);
         }
     }
 
-    tcPayload.u[lid] = u;
     uint candidates_scan = WavePrefixSum(candidates);
     if(lid == WAVE_SIZE - 1) {
         tcPayload.offsets[WAVE_SIZE] = candidates_scan + candidates;
@@ -114,39 +129,52 @@ void tc_mesh(
     uint32_t b_size;
 
     uint64_t global_eid = inPayload.edge_start + local_eid;
-    uint u = inPayload.u[local_eid];
+    uint u = inPayload.u_start;
+    while(global_eid >= tcIn.list_offset[u+1]) {
+        u++;
+    }
     uint v = At(tcIn.edge_lists, global_eid);
-    uint n_v = tcIn.list_offset[v+1] - tcIn.list_offset[v];
-    uint n_u = tcIn.list_offset[u+1] - tcIn.list_offset[u];
+
+    uint64_t u_start = global_eid+1;
+    uint64_t v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
+                                tcIn.list_offset[v+1],
+                                (uint32_t vertex) => (vertex > v));
+
+    uint n_v = tcIn.list_offset[v+1] - v_start;
+    uint n_u = tcIn.list_offset[u+1] - u_start;
     if(n_u < n_v) {
-        s_offset = tcIn.list_offset[u];
-        b_offset = tcIn.list_offset[v];
+        s_offset = u_start;
+        b_offset = v_start;
         b_size = n_v;
     } else {
-        s_offset = tcIn.list_offset[v];
-        b_offset = tcIn.list_offset[u];
+        s_offset = v_start;
+        b_offset = u_start;
         b_size = n_u;
     }
 
     uint64_t local_w_idx = threadId - inPayload.offsets[local_eid];
     uint w = At(tcIn.edge_lists, local_w_idx + s_offset);
-    if(w > v) {
-        uint low = 0;
-        uint high = b_size;
-        while(low < high) {
-            uint mid = low + (high-low)/2;
-            uint mid_val = At(tcIn.edge_lists, mid + b_offset);
-            if(mid_val < w) {
-                low = mid + 1;
-            } else if(w < mid_val) {
-                high = mid;
-            } else {
-                InterlockedAdd(*tcIn.tc, 1);
-                break;
-            }
-        }
+    uint found_triangle = 0;
+    uint count = b_size;
+    uint low = 0;
+    while(count > 0) {
+        uint step = count / 2;
+        uint mid = low + step;
+        uint mid_val = At(tcIn.edge_lists, mid + b_offset);
+        
+        bool is_less = (mid_val < w);
+        low = is_less ? (mid + 1) : low;
+        count = is_less ? (count - (step + 1)) : step;
+    }
+    if(low < b_size && At(tcIn.edge_lists, low + b_offset) == w) {
+        found_triangle = 1;
     }
 
+    uint triangles = WaveActiveSum(found_triangle);
+    if(WaveIsFirstLane()) {
+        InterlockedAdd(*tcIn.tc, triangles);
+    }
+    
     SetMeshOutputCounts(0, 0);
     return;
 }
