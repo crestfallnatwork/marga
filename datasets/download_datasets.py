@@ -1,22 +1,49 @@
-# AI GENERATED FILE  
+# AI GENERATED FILE
 # SPDX-License-Identifier: Unlicense
- 
-#/usr/bin/env python3
+
+# This is free and unencumbered software released into the public domain.
+#
+# Anyone is free to copy, modify, publish, use, compile, sell, or
+# distribute this software, either in source code form or as a compiled
+# binary, for any purpose, commercial or non-commercial, and by any
+# means.
+#
+# In jurisdictions that recognize copyright laws, the author or authors
+# of this software dedicate any and all copyright interest in the
+# software to the public domain. We make this dedication for the benefit
+# of the public at large and to the detriment of our heirs and
+# successors. We intend this dedication to be an overt act of
+# relinquishment in perpetuity of all present and future rights to this
+# software under copyright law.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+# For more information, please refer to <http://unlicense.org/>
+
+
+
+#!/usr/bin/env python3
 import os
 import sys
 import subprocess
-import hashlib
 import shutil
 import glob
 
 def compute_sha256(filepath):
-    """Compute the SHA-256 hash of a file."""
-    sha256_hash = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        # Read in chunks of 4K
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest()
+    """Compute the SHA-256 hash of a file using the sha256sum binary utility."""
+    try:
+        result = subprocess.run(["sha256sum", filepath], stdout=subprocess.PIPE, check=True, text=True)
+        # The output format is "hash  filename", so we split and take the first element
+        return result.stdout.split()[0]
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to compute hash for {filepath}: {e}")
+        return None
 
 def get_downloader():
     """Returns 'aria2c' if available, otherwise 'wget'."""
@@ -71,12 +98,11 @@ def process_dataset(dataset_dir):
     filename = url.split("/")[-1]
     archive_path = os.path.join(dataset_dir, filename)
     
-    if not os.path.exists(hash_file):
-        print(f"[{dir_name}] Skipping: hash.txt is missing. Expected pre-existing hashes.")
-        return
-        
-    with open(hash_file, "r") as f:
-        expected_hash = f.read().strip()
+    if os.path.exists(hash_file):
+        with open(hash_file, "r") as f:
+            expected_hash = f.read().strip()
+    else:
+        expected_hash = None
 
     print(f"\n--- Processing {dir_name} ---")
 
@@ -91,16 +117,27 @@ def process_dataset(dataset_dir):
     # Stage 1: Pre-check verification
     graph_file = get_graph_file()
     if graph_file:
-        print(f"[{dir_name}] Found existing graph file: {os.path.basename(graph_file)}. Verifying hash...")
-        actual_hash = compute_sha256(graph_file)
-        if actual_hash == expected_hash:
-            print(f"[{dir_name}] Hash matches. Dataset is ready.")
-            return
+        print(f"[{dir_name}] Found existing graph file: {os.path.basename(graph_file)}.")
+        
+        if expected_hash:
+            print(f"[{dir_name}] Verifying hash using sha256sum...")
+            actual_hash = compute_sha256(graph_file)
+            if actual_hash == expected_hash:
+                print(f"[{dir_name}] Hash matches. Dataset is ready.")
+                return
+            else:
+                print(f"[{dir_name}] Hash mismatch! Deleting corrupt files...")
+                os.remove(graph_file)
+                if os.path.exists(archive_path):
+                    os.remove(archive_path)
         else:
-            print(f"[{dir_name}] Hash mismatch! Deleting corrupt files...")
-            os.remove(graph_file)
-            if os.path.exists(archive_path):
-                os.remove(archive_path)
+            print(f"[{dir_name}] No hash.txt found. Generating hash using sha256sum...")
+            actual_hash = compute_sha256(graph_file)
+            if actual_hash:
+                with open(hash_file, "w") as f:
+                    f.write(actual_hash + "\n")
+                print(f"[{dir_name}] Hash generated and saved. Dataset is ready.")
+            return
 
     downloader = get_downloader()
     max_retries = 2
@@ -142,21 +179,30 @@ def process_dataset(dataset_dir):
         flatten_directory(extract_dir, dataset_dir)
         shutil.rmtree(extract_dir)
         
-        # Stage 5: Post-Extraction Verification
+        # Stage 5: Post-Extraction Verification / Hash Generation
         graph_file = get_graph_file()
         if not graph_file:
             print(f"[{dir_name}] Error: No .mtx or .edges file found after extraction.")
             continue
             
-        print(f"[{dir_name}] Verifying hash of extracted file...")
+        print(f"[{dir_name}] Computing hash of extracted file using sha256sum...")
         actual_hash = compute_sha256(graph_file)
-        if actual_hash == expected_hash:
-            print(f"[{dir_name}] Successfully downloaded, extracted, and verified!")
-            return
+        if not actual_hash:
+            continue
+            
+        if expected_hash:
+            if actual_hash == expected_hash:
+                print(f"[{dir_name}] Successfully downloaded, extracted, and verified!")
+                return
+            else:
+                print(f"[{dir_name}] Hash mismatch after extraction! Deleting and retrying...")
+                os.remove(graph_file)
+                os.remove(archive_path)
         else:
-            print(f"[{dir_name}] Hash mismatch after extraction! Deleting and retrying...")
-            os.remove(graph_file)
-            os.remove(archive_path)
+            with open(hash_file, "w") as f:
+                f.write(actual_hash + "\n")
+            print(f"[{dir_name}] Successfully downloaded, extracted, and generated missing hash!")
+            return
             
     print(f"[{dir_name}] Failed to obtain a valid dataset after {max_retries} attempts.")
 
