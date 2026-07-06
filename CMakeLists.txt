@@ -41,3 +41,6 @@ target_link_libraries(pagerank pictor_graphs pictor_core pictor_graphs_pr)
 
 add_executable(tc src/tc_main.cpp)
 target_link_libraries(tc pictor_graphs pictor_core pictor_graphs_tc)
+
+add_executable(gen_vertices src/gen_vertices.cpp)
+target_link_libraries(gen_vertices pictor_graphs pictor_core)

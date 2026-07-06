@@ -60,34 +60,19 @@ def ensure_vertices_file(graph_name):
     if os.path.exists(vertices_file):
         return vertices_file
         
-    print(f"[{graph_name}] vertices.txt not found. Generating 64 random vertices...")
+    print(f"[{graph_name}] vertices.txt not found. Using C++ engine to generate 64 valid sources...")
     
     if not os.path.exists(mtx_file):
         raise FileNotFoundError(f"MTX file not found: {mtx_file}")
         
-    num_vertices = 0
-    with open(mtx_file, 'r') as f:
-        for line in f:
-            if line.startswith('%'):
-                continue
-            # The first non-comment line contains: rows cols nnz
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                num_vertices = int(parts[0])
-                break
-                
-    if num_vertices == 0:
-        raise ValueError(f"Could not parse number of vertices from {mtx_file}")
-        
-    # Generate 64 random vertices
-    random.seed(42) # For reproducibility
-    sources = [random.randint(0, num_vertices - 1) for _ in range(64)]
+    pictor_gen_bin = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "build", "gen_vertices"))
+    cmd = [pictor_gen_bin, mtx_file, "-n", "64"]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=True)
     
-    with open(vertices_file, 'w') as f:
-        for src in sources:
-            f.write(f"{src}\n")
+    with open(vertices_file, "w") as f:
+        f.write(result.stdout)
             
-    print(f"[{graph_name}] Successfully generated vertices.txt (max vertex id: {num_vertices-1})")
+    print(f"[{graph_name}] Successfully generated vertices.txt")
     return vertices_file
 
 def run_command(cmd):
