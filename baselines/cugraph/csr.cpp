@@ -375,6 +375,7 @@ Graph<vertex_t, edge_t> Graph<vertex_t, edge_t>::import(std::string const& file,
     }
     g.row_offsets[num_vertices] = true_edges;
     g.num_edges = true_edges;
+    g.column_indices = std::span<vertex_t>(static_cast<vertex_t*>(g.h_column_indices), g.num_edges);
 
     // Shift sequentially to prevent data races
     for (uint64_t v = 0; v < num_vertices; ++v) {

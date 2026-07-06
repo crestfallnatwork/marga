@@ -383,6 +383,7 @@ Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
     }
     g.row_offsets[num_vertices] = true_edges;
     g.num_edges = true_edges;
+    g.column_indices = std::span<vertex_t>(static_cast<vertex_t*>(g.h_column_indices), g.num_edges);
 
     // Shift sequentially to prevent data races
     for (uint64_t v = 0; v < num_vertices; ++v) {
