@@ -66,8 +66,10 @@ int main(int argc, char* argv[])
             pictor::HeapAllocator::create(&ctx, ctx.root_pinned_allocator.get(), free_mem).val()));
 
         pictor::graphs::BFS bfs(ctx);
-        std::vector<pictor::graphs::BFSTimings> all_gpu_timings;
+        bfs.allocate(g.num_vertices, g.num_edges);
+        
         std::vector<pictor::graphs::ValidationTimings> all_cpu_timings;
+        double total_time_ms = 0;
 
         std::cout << "Running BFS for " << sources.size() << " source(s)..." << std::endl;
 
@@ -76,49 +78,29 @@ int main(int argc, char* argv[])
 
             ctx.wait_idle(); // Ensure GPU is clean before next run
 
-            auto [gpu_distances, gpu_t] = bfs.run(g, src);
-            all_gpu_timings.push_back(gpu_t);
-            std::cout << "  GPU Run Total: " << gpu_t.total_ms << " ms" << std::endl;
+            auto run_start = std::chrono::high_resolution_clock::now();
+            bfs.run(g, src);
+            auto run_end = std::chrono::high_resolution_clock::now();
+
+            double time_ms = std::chrono::duration<double, std::milli>(run_end - run_start).count();
+            std::cout << "  GPU Run Total: " << time_ms << " ms" << std::endl;
+            total_time_ms += time_ms;
 
             if (validate) {
+                auto gpu_distances = bfs.copy_to_host(g.num_vertices);
+                std::span<uint32_t> gpu_distances_span(gpu_distances.data(), g.num_vertices);
+                
                 std::cout << "Running CPU Validation..." << std::endl;
                 auto [cpu_distances, cpu_t] = pictor::graphs::BFSValidator::run(g, src);
                 all_cpu_timings.push_back(cpu_t);
                 std::cout << "CPU Total: " << cpu_t.traversal_ms << " ms" << std::endl;
 
-                pictor::graphs::BFSValidator::verify(g, src, gpu_distances, cpu_distances);
+                pictor::graphs::BFSValidator::verify(g, src, gpu_distances_span, cpu_distances);
             }
         }
 
-        // Aggregate and print averages
-        auto print_avg_gpu = [&](const std::vector<pictor::graphs::BFSTimings>& timings) {
-            pictor::graphs::BFSTimings avg;
-            for (const auto& t : timings) {
-                avg.alloc_ms += t.alloc_ms;
-                avg.init_ms += t.init_ms;
-                avg.traversal_ms += t.traversal_ms;
-                avg.inner_sync_ms += t.inner_sync_ms;
-                avg.pci_readback_ms += t.pci_readback_ms;
-                avg.total_ms += t.total_ms;
-            }
-            double n = static_cast<double>(timings.size());
-            avg.alloc_ms /= n;
-            avg.init_ms /= n;
-            avg.traversal_ms /= n;
-            avg.inner_sync_ms /= n;
-            avg.pci_readback_ms /= n;
-            avg.total_ms /= n;
-
-            std::cout << "\n=== GPU BFS Average Results (" << timings.size()
-                      << " runs) ===" << std::endl;
-            std::cout << "  VMA Allocations:     " << avg.alloc_ms << " ms" << std::endl;
-            std::cout << "  Initialization (H2D): " << avg.init_ms << " ms" << std::endl;
-            std::cout << "  Traversal (GPU):     " << avg.traversal_ms
-                      << " ms (Inner sync: " << avg.inner_sync_ms << " ms)" << std::endl;
-            std::cout << "  Final PCIe Readback: " << avg.pci_readback_ms << " ms" << std::endl;
-            std::cout << "  --------------------------------" << std::endl;
-            std::cout << "  AVERAGE TOTAL:       " << avg.total_ms - avg.pci_readback_ms << " ms" << std::endl;
-        };
+        std::cout << "\n=== GPU BFS Average Results (" << sources.size() << " runs) ===" << std::endl;
+        std::cout << "  AVERAGE TOTAL:       " << total_time_ms / sources.size() << " ms" << std::endl;
 
         auto print_avg_cpu = [&](const std::vector<pictor::graphs::ValidationTimings>& timings) {
             double avg_traversal = 0;
@@ -132,7 +114,6 @@ int main(int argc, char* argv[])
         };
 
         std::cout << std::fixed << std::setprecision(3);
-        print_avg_gpu(all_gpu_timings);
         if (!all_cpu_timings.empty()) {
             print_avg_cpu(all_cpu_timings);
         }

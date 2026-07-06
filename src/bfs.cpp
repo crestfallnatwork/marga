@@ -23,22 +23,16 @@ BFS::~BFS()
     _cleanup_buffers();
 }
 
-void BFS::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges)
+void BFS::allocate(uint64_t num_vertices, uint64_t num_edges)
 {
-    _cleanup_buffers();
+    if (_distances.allocation)
+        _ctx.deallocate(_distances);
+    if (_h_distances.allocation)
+        _ctx.deallocate(_h_distances);
 
-    _frontier_a = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
-    _frontier_b = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
-    _frontier_size_a = _ctx.pool_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
-    _frontier_size_b = _ctx.pool_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
-
-    uint64_t visited_size = (num_vertices + 31) / 32 * sizeof(uint32_t);
-    _visited              = _ctx.pool_allocator->allocate(visited_size, alignof(uint32_t));
     _distances = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
     _h_distances =
         _ctx.pinned_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
-    _indirect_buffer = _ctx.pool_allocator->allocate(4 * sizeof(uint32_t), alignof(uint32_t));
-    _staging_size    = _ctx.pinned_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
 }
 
 void BFS::_cleanup_buffers()
@@ -63,19 +57,19 @@ void BFS::_cleanup_buffers()
         _ctx.deallocate(_staging_size);
 }
 
-std::pair<std::span<uint32_t>, BFSTimings> BFS::run(Graph& g, uint32_t src_vertex)
+void BFS::run(Graph& g, uint32_t src_vertex)
 {
-    auto t_full_start = std::chrono::high_resolution_clock::now();
-    BFSTimings t;
+    uint64_t num_vertices = g.num_vertices;
+    
+    _frontier_a = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
+    _frontier_b = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
+    _frontier_size_a = _ctx.pool_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
+    _frontier_size_b = _ctx.pool_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
+    uint64_t visited_size = (num_vertices + 31) / 32 * sizeof(uint32_t);
+    _visited              = _ctx.pool_allocator->allocate(visited_size, alignof(uint32_t));
+    _indirect_buffer = _ctx.pool_allocator->allocate(4 * sizeof(uint32_t), alignof(uint32_t));
+    _staging_size    = _ctx.pinned_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
 
-    auto t_alloc_start = std::chrono::high_resolution_clock::now();
-    if (_h_distances.size != g.num_vertices * sizeof(uint32_t)) {
-        _allocate_buffers(g.num_vertices, g.num_edges);
-    }
-    auto t_alloc_end = std::chrono::high_resolution_clock::now();
-    t.alloc_ms = std::chrono::duration<double, std::milli>(t_alloc_end - t_alloc_start).count();
-
-    auto t_init_start = std::chrono::high_resolution_clock::now();
     _ctx.fill(_distances, 0xFFFFFFFF);
     _ctx.fill(_visited, 0);
     _ctx.fill(_frontier_size_a, 1);
@@ -93,16 +87,11 @@ std::pair<std::span<uint32_t>, BFSTimings> BFS::run(Graph& g, uint32_t src_verte
 
     _ctx.fsync();
 
-    auto t_init_end = std::chrono::high_resolution_clock::now();
-    t.init_ms       = std::chrono::duration<double, std::milli>(t_init_end - t_init_start).count();
-
     uint32_t current_level                        = 0;
     bool finished                                 = false;
     uint32_t next_size                            = 1;
     std::array<AllocationInfo*, 2> frontiers      = {&_frontier_a, &_frontier_b};
     std::array<AllocationInfo*, 2> frontier_sizes = {&_frontier_size_a, &_frontier_size_b};
-
-    auto t_traversal_start = std::chrono::high_resolution_clock::now();
 
     uint32_t batch_size = 10;
     int current         = 0;
@@ -153,22 +142,30 @@ std::pair<std::span<uint32_t>, BFSTimings> BFS::run(Graph& g, uint32_t src_verte
         // next_size);
     }
 
-    auto t_traversal_end = std::chrono::high_resolution_clock::now();
-    t.traversal_ms =
-        std::chrono::duration<double, std::milli>(t_traversal_end - t_traversal_start).count();
+    _ctx.deallocate(_frontier_a);
+    _frontier_a.allocation = nullptr;
+    _ctx.deallocate(_frontier_b);
+    _frontier_b.allocation = nullptr;
+    _ctx.deallocate(_frontier_size_a);
+    _frontier_size_a.allocation = nullptr;
+    _ctx.deallocate(_frontier_size_b);
+    _frontier_size_b.allocation = nullptr;
+    _ctx.deallocate(_visited);
+    _visited.allocation = nullptr;
+    _ctx.deallocate(_indirect_buffer);
+    _indirect_buffer.allocation = nullptr;
+    _ctx.deallocate(_staging_size);
+    _staging_size.allocation = nullptr;
+}
 
-    auto t_readback_st = std::chrono::high_resolution_clock::now();
-
+std::vector<uint32_t> BFS::copy_to_host(uint32_t num_vertices)
+{
     _ctx.copy(_distances, _h_distances);
     _ctx.fsync();
 
-    auto t_readback_end = std::chrono::high_resolution_clock::now();
-    t.pci_readback_ms =
-        std::chrono::duration<double, std::milli>(t_readback_end - t_readback_st).count();
-    auto t_full_end = std::chrono::high_resolution_clock::now();
-    t.total_ms      = std::chrono::duration<double, std::milli>(t_full_end - t_full_start).count();
-
-    return {std::span<uint32_t>(static_cast<uint32_t*>(_h_distances.mappedPtr), g.num_vertices), t};
+    std::vector<uint32_t> result(num_vertices);
+    std::memcpy(result.data(), _h_distances.mappedPtr, num_vertices * sizeof(uint32_t));
+    return result;
 }
 
 } // namespace graphs

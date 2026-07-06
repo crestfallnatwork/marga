@@ -13,22 +13,14 @@ struct Context;
 
 namespace graphs {
 
-struct BFSTimings {
-    double alloc_ms        = 0;
-    double init_ms         = 0;
-    double traversal_ms    = 0;
-    double inner_sync_ms   = 0;
-    double pci_readback_ms = 0;
-    double total_ms        = 0;
-};
-
 class BFS {
   public:
     BFS(Context& ctx);
     ~BFS();
 
-    // Returns a span to host-pinned distances and detailed timing information.
-    std::pair<std::span<uint32_t>, BFSTimings> run(Graph& g, uint32_t src_vertex);
+    void allocate(uint64_t num_vertices, uint64_t num_edges);
+    void run(Graph& g, uint32_t src_vertex);
+    std::vector<uint32_t> copy_to_host(uint32_t num_vertices);
 
   private:
     Context& _ctx;
@@ -51,7 +43,7 @@ class BFS {
     AllocationInfo _indirect_buffer;
     AllocationInfo _staging_size;
 
-    void _allocate_buffers(uint64_t num_vertices, uint64_t num_edges);
+
     void _cleanup_buffers();
 };
 
