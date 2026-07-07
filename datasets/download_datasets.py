@@ -84,20 +84,22 @@ def flatten_directory(extract_dir, target_dir):
     for item in contents:
         shutil.move(os.path.join(extract_dir, item), target_dir)
 
+def ensure_gapbs(base_dir):
+    gapbs_dir = os.path.join(base_dir, "..", "external", "gapbs")
+    converter_bin = os.path.join(gapbs_dir, "converter")
+    if not os.path.exists(converter_bin):
+        raise ValueError("GAPBS not found")
+    return converter_bin
+
 def process_dataset(dataset_dir):
     dir_name = os.path.basename(dataset_dir)
     url_file = os.path.join(dataset_dir, "url.txt")
+    gen_file = os.path.join(dataset_dir, "gen.txt")
     hash_file = os.path.join(dataset_dir, "hash.txt")
     
-    if not os.path.exists(url_file):
+    if not os.path.exists(url_file) and not os.path.exists(gen_file):
         return
 
-    with open(url_file, "r") as f:
-        url = f.read().strip()
-    
-    filename = url.split("/")[-1]
-    archive_path = os.path.join(dataset_dir, filename)
-    
     if os.path.exists(hash_file):
         with open(hash_file, "r") as f:
             expected_hash = f.read().strip()
@@ -128,8 +130,6 @@ def process_dataset(dataset_dir):
             else:
                 print(f"[{dir_name}] Hash mismatch! Deleting corrupt files...")
                 os.remove(graph_file)
-                if os.path.exists(archive_path):
-                    os.remove(archive_path)
         else:
             print(f"[{dir_name}] No hash.txt found. Generating hash using sha256sum...")
             actual_hash = compute_sha256(graph_file)
@@ -139,13 +139,66 @@ def process_dataset(dataset_dir):
                 print(f"[{dir_name}] Hash generated and saved. Dataset is ready.")
             return
 
+    # Stage 2: Generation or Download
+    if os.path.exists(gen_file):
+        converter = ensure_gapbs(os.path.dirname(dataset_dir))
+        with open(gen_file, "r") as f:
+            gen_params = f.read().strip().split()
+
+        print(f"[{dir_name}] Generating graph with GAPBS: {' '.join(gen_params)}...")
+        tmp_el = os.path.join(dataset_dir, "temp.el")
+        
+        cmd = [converter] + gen_params + ["-e", tmp_el]
+        try:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True, text=True)
+            nodes = None
+            edges = None
+            for line in result.stdout.split('\n'):
+                if "Graph has" in line and "nodes" in line and "edges" in line:
+                    parts = line.split()
+                    nodes = parts[2]
+                    edges = parts[5]
+                    break
+            
+            if not nodes or not edges:
+                raise ValueError("Could not parse nodes/edges from GAPBS output")
+                
+            out_mtx = os.path.join(dataset_dir, f"{dir_name}.mtx")
+            print(f"[{dir_name}] Converting edge list to MTX...")
+            with open(out_mtx, 'w') as f_out:
+                f_out.write("%%MatrixMarket matrix coordinate pattern general\n")
+                f_out.write(f"{nodes} {nodes} {edges}\n")
+                with open(tmp_el, 'r') as f_in:
+                    shutil.copyfileobj(f_in, f_out)
+                    
+            os.remove(tmp_el)
+            
+            print(f"[{dir_name}] Computing hash of generated file...")
+            actual_hash = compute_sha256(out_mtx)
+            if actual_hash:
+                with open(hash_file, "w") as f:
+                    f.write(actual_hash + "\n")
+            print(f"[{dir_name}] Successfully generated, converted, and verified!")
+        except Exception as e:
+            print(f"[{dir_name}] Generation failed: {e}")
+            if os.path.exists(tmp_el):
+                os.remove(tmp_el)
+        return
+
+    # Continue with Download Mode
+    with open(url_file, "r") as f:
+        url = f.read().strip()
+    
+    filename = url.split("/")[-1]
+    archive_path = os.path.join(dataset_dir, filename)
+
     downloader = get_downloader()
     max_retries = 2
     
     for attempt in range(1, max_retries + 1):
         print(f"[{dir_name}] Download attempt {attempt} using {downloader}...")
         
-        # Stage 2: Download
+        # Download
         os.chdir(dataset_dir)
         try:
             if downloader == "aria2c":
@@ -159,7 +212,7 @@ def process_dataset(dataset_dir):
             print(f"[{dir_name}] Failed to create archive file.")
             continue
             
-        # Stage 3: Extraction & Native Check
+        # Extraction & Native Check
         print(f"[{dir_name}] Extracting...")
         extract_dir = os.path.join(dataset_dir, ".tmp_extract")
         if os.path.exists(extract_dir):
@@ -175,11 +228,11 @@ def process_dataset(dataset_dir):
                 shutil.rmtree(extract_dir)
             continue
             
-        # Stage 4: Copy & Flatten
+        # Copy & Flatten
         flatten_directory(extract_dir, dataset_dir)
         shutil.rmtree(extract_dir)
         
-        # Stage 5: Post-Extraction Verification / Hash Generation
+        # Post-Extraction Verification / Hash Generation
         graph_file = get_graph_file()
         if not graph_file:
             print(f"[{dir_name}] Error: No .mtx or .edges file found after extraction.")
