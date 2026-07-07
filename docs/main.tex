@@ -1,0 +1,53 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\title{Using Mesh Shaders for Power-Law Graph Workloads}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{The Graph Analytics Problem}
+
+Graphics Processing Units (GPUs) are designed for massive, uniform parallelism. Unfortunately, real-world graphs are entirely non-uniform. They exhibit a power-law degree distribution, meaning a few massive "hub" vertices contain millions of connections, while the vast majority of vertices have very few. When mapped to a GPU, this creates severe load imbalance: a single hardware thread assigned to a hub vertex will stall the entire processor while other threads sit idle. Traditional graph frameworks attempt to fix this with complex software-managed load balancing, which introduces significant synchronization overhead.
+
+Furthermore, advanced graph algorithms often require dynamic work culling. For example, in Triangle Counting, algorithms typically orient the undirected graph (e.g., pointing edges from low-degree to high-degree vertices) to mathematically avoid redundant work. However, enforcing this on a GPU usually requires physically rebuilding the directed graph in memory, resulting in massive computational and memory bandwidth penalties.
+
+\section{Similar Problems in Game Development}
+
+The game development community has faced---and solved---similar challenges of massive, unpredictable complexity for decades. We draw direct inspiration from two specific rendering problems:
+
+\subsection{Problem 1: Dynamic LOD (Level of Detail)}
+In a 3D scene, not all objects require the same computational effort. A highly detailed character close to the camera might be composed of a million triangles, while a distant rock only requires ten. Processing a highly detailed character in a rigid graphics pipeline creates the exact same bottleneck as processing a hub node in a compute shader. Both domains require a dynamic mechanism to scale or "amplify" the amount of hardware resources assigned to an object based on its actual complexity.
+
+\subsection{Problem 2: Occlusion and Culling}
+Game engines aggressively discard invisible objects before spending hardware resources to render them. \textit{Frustum culling} drops objects outside the camera's view, and \textit{occlusion culling} drops objects hidden behind walls. We can map this concept directly to graph analytics: if a candidate edge is mathematically guaranteed to produce no useful work (such as failing a degree orientation check), it should be dynamically "occluded" or culled entirely on the GPU before any traversal threads are allocated to it.
+
+\section{The Mesh Shader Pipeline in Rendering}
+
+To solve extreme LOD and occlusion, the rendering community recently introduced the \textbf{Mesh Shader} pipeline. It shifts the responsibility of geometry processing into a cooperative, compute-centric model using two highly flexible stages:
+
+\begin{enumerate}
+    \item \textbf{Task Shader (Amplification):} This shader acts as the dynamic manager for the 3D scene. It rapidly evaluates objects, performs immediate occlusion culling, and determines the required LOD for surviving objects. It then dynamically amplifies the workload by slicing complex objects into perfectly uniform, bite-sized chunks of geometry called \textbf{Meshlets}.
+    \item \textbf{Mesh Shader:} The hardware geometry scheduler dynamically launches one thread group for every Meshlet spawned by the Task Shader. Because every Meshlet contains a bounded, strictly uniform amount of work, the GPU processes them with perfect, implicit load balance.
+\end{enumerate}
+
+\section{Our Solution: Rasterizing Graphs}
+
+To solve graph load-balancing without complex software overhead, we propose treating a graph exactly like a 3D scene. We map graph analytics directly onto the modern geometry pipeline, hijacking its fixed-function scheduler for pure compute.
+
+Instead of evaluating a 3D scene, our \textbf{Task Shader} reads what we call a \textbf{Graph Scene}. What this is exactly depends on the actual algorithm, but intuitively it is the part of the graph that we are currently doing work on or is actively changing. For example, in Breadth-First Search (BFS), the Graph Scene corresponds exactly to the current frontier (the last explored level of vertices). 
+
+The Task Shader evaluates this scene and performs algorithmic occlusion on the fly. For example, in Triangle Counting, it dynamically discards candidate edges that fail orientation checks without ever rebuilding the graph in memory. For the surviving workloads, the Task Shader aggregates the total required computation. Rather than breaking a 3D scene into geometry meshlets, it divides this required computation into uniform \textbf{"algorithmic meshlets"}---fixed, logical bundles of work. In BFS, this means the Task Shader chunks the entire set of outgoing edges belonging to the active frontier into perfectly uniform algorithmic meshlets of exactly 128 edges each.
+
+Here is where the real work happens. The hardware scheduler launches a \textbf{Mesh Shader} thread group for every algorithmic meshlet. Because each meshlet contains a guaranteed, fixed amount of work, execution is perfectly balanced across the GPU, completely flattening the unpredictable power-law topology of the graph. 
+
+Finally, once the graph computations (such as checking unvisited neighbors and updating distance arrays) are complete, our Mesh Shader deliberately emits zero rendering primitives. This completely bypasses the rasterizer, tricking the GPU's fixed-function geometry scheduler into perfectly load-balancing highly irregular graph algorithms.
+
+\end{document}
