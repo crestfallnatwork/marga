@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
             std::ifstream infile(vertices_file);
             uint32_t v;
             while (infile >> v)
-                sources.push_back(v);
+                sources.push_back(v-1);
         } else {
             sources.push_back(src_vertex);
         }
