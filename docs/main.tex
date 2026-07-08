@@ -5,7 +5,7 @@
 \usepackage{listings}
 \usepackage{xcolor}
 
-\title{Using Mesh Shaders for Power-Law Graph Workloads}
+\title{Rasterizing Graphs}
 \author{}
 \date{}
 
@@ -17,7 +17,7 @@
 
 Graphics Processing Units (GPUs) are designed for massive, uniform parallelism. Unfortunately, real-world graphs are entirely non-uniform. They exhibit a power-law degree distribution, meaning a few massive "hub" vertices contain millions of connections, while the vast majority of vertices have very few. When mapped to a GPU, this creates severe load imbalance: a single hardware thread assigned to a hub vertex will stall the entire processor while other threads sit idle. Traditional graph frameworks attempt to fix this with complex software-managed load balancing, which introduces significant synchronization overhead.
 
-Furthermore, advanced graph algorithms often require dynamic work culling. For example, in Triangle Counting, algorithms typically orient the undirected graph (e.g., pointing edges from low-degree to high-degree vertices) to mathematically avoid redundant work. However, enforcing this on a GPU usually requires physically rebuilding the directed graph in memory, resulting in massive computational and memory bandwidth penalties.
+Furthermore, advanced graph algorithms often require dynamic work culling. For example, in Triangle Counting, algorithms typically orient the undirected graph (e.g., pointing edges from low-degree to high-degree vertices) to mathematically avoid redundant work. However, enforcing this on a GPU usually requires physically rebuilding the directed graph in memory, resulting in computational and memory overhead.
 
 \section{Similar Problems in Game Development}
 
@@ -26,28 +26,179 @@ The game development community has faced---and solved---similar challenges of ma
 \subsection{Problem 1: Dynamic LOD (Level of Detail)}
 In a 3D scene, not all objects require the same computational effort. A highly detailed character close to the camera might be composed of a million triangles, while a distant rock only requires ten. Processing a highly detailed character in a rigid graphics pipeline creates the exact same bottleneck as processing a hub node in a compute shader. Both domains require a dynamic mechanism to scale or "amplify" the amount of hardware resources assigned to an object based on its actual complexity.
 
-\subsection{Problem 2: Occlusion and Culling}
-Game engines aggressively discard invisible objects before spending hardware resources to render them. \textit{Frustum culling} drops objects outside the camera's view, and \textit{occlusion culling} drops objects hidden behind walls. We can map this concept directly to graph analytics: if a candidate edge is mathematically guaranteed to produce no useful work (such as failing a degree orientation check), it should be dynamically "occluded" or culled entirely on the GPU before any traversal threads are allocated to it.
+\subsection{Problem 2: Occlusion}
+In 3D rendering, processing geometry that is ultimately hidden behind other objects (occluded) is a significant source of wasted computation. There are direct parallels in many graph algorithms. For example in Triangle Counting, when processing an unoriented graph each triangle is counted three times.
 
 \section{The Mesh Shader Pipeline in Rendering}
 
-To solve extreme LOD and occlusion, the rendering community recently introduced the \textbf{Mesh Shader} pipeline. It shifts the responsibility of geometry processing into a cooperative, compute-centric model using two highly flexible stages:
+Over the years, the game development community had many solutions for these problems. The \textbf{Mesh Shader} pipeline is the most recent innovation. It shifts the responsibility of geometry processing into a cooperative, compute-centric model using two highly flexible stages:
 
 \begin{enumerate}
     \item \textbf{Task Shader (Amplification):} This shader acts as the dynamic manager for the 3D scene. It rapidly evaluates objects, performs immediate occlusion culling, and determines the required LOD for surviving objects. It then dynamically amplifies the workload by slicing complex objects into perfectly uniform, bite-sized chunks of geometry called \textbf{Meshlets}.
     \item \textbf{Mesh Shader:} The hardware geometry scheduler dynamically launches one thread group for every Meshlet spawned by the Task Shader. Because every Meshlet contains a bounded, strictly uniform amount of work, the GPU processes them with perfect, implicit load balance.
 \end{enumerate}
 
-\section{Our Solution: Rasterizing Graphs}
+\section{Graph Rasterization}
 
-To solve graph load-balancing without complex software overhead, we propose treating a graph exactly like a 3D scene. We map graph analytics directly onto the modern geometry pipeline, hijacking its fixed-function scheduler for pure compute.
+The compute-centric nature of the Mesh Shader pipeline maps very well to a wide variety of data structures. It is not restrictive to just polygons; the exact representation of a 3D scene could theoretically be anything. Leveraging this flexibility to solve graph load-balancing without complex software overhead, we can conceptually think of a graph as a 3D scene, which we call the \textbf{Graph Scene}.
 
-Instead of evaluating a 3D scene, our \textbf{Task Shader} reads what we call a \textbf{Graph Scene}. What this is exactly depends on the actual algorithm, but intuitively it is the part of the graph that we are currently doing work on or is actively changing. For example, in Breadth-First Search (BFS), the Graph Scene corresponds exactly to the current frontier (the last explored level of vertices). 
+What this Graph Scene is exactly depends on the actual algorithm, but intuitively it is the part of the graph that we are currently doing work on. For example, in Triangle Counting, the Graph Scene corresponds exactly to the set of edges being processed. Our pipeline processes this scene using two stages:
 
-The Task Shader evaluates this scene and performs algorithmic occlusion on the fly. For example, in Triangle Counting, it dynamically discards candidate edges that fail orientation checks without ever rebuilding the graph in memory. For the surviving workloads, the Task Shader aggregates the total required computation. Rather than breaking a 3D scene into geometry meshlets, it divides this required computation into uniform \textbf{"algorithmic meshlets"}---fixed, logical bundles of work. In BFS, this means the Task Shader chunks the entire set of outgoing edges belonging to the active frontier into perfectly uniform algorithmic meshlets of exactly 128 edges each.
+\begin{enumerate}
+    \item \textbf{Task Shader (Algorithmic Culling and Amplification):} Our Task Shader reads the Graph Scene and performs our variant of occlusion culling---discarding work that will have no effect on the output. For example, in Triangle Counting, it dynamically discards candidate edges that fail orientation checks. For the surviving workloads, the Task Shader aggregates the total required computation. Rather than producing geometry meshlets, it divides this required computation and produces uniform \textbf{"algorithmic meshlets"}---fixed, logical bundles of work. In BFS, this means the Task Shader chunks the entire set of outgoing edges belonging to the active frontier into perfectly uniform algorithmic meshlets of exactly 128 edges each.
+    
+    \item \textbf{Mesh Shader:} Here is where the real work happens. The hardware scheduler launches a Mesh Shader thread group for every algorithmic meshlet. Because each meshlet contains a guaranteed, fixed amount of work, execution is perfectly balanced across the GPU, completely flattening the unpredictable power-law topology of the graph. Finally, once the graph computations (such as checking unvisited neighbors and updating distance arrays) are complete, our Mesh Shader deliberately emits zero rendering primitives. This completely bypasses the rasterizer.
+\end{enumerate}
 
-Here is where the real work happens. The hardware scheduler launches a \textbf{Mesh Shader} thread group for every algorithmic meshlet. Because each meshlet contains a guaranteed, fixed amount of work, execution is perfectly balanced across the GPU, completely flattening the unpredictable power-law topology of the graph. 
+\section{The Programming Abstraction}
 
-Finally, once the graph computations (such as checking unvisited neighbors and updating distance arrays) are complete, our Mesh Shader deliberately emits zero rendering primitives. This completely bypasses the rasterizer, tricking the GPU's fixed-function geometry scheduler into perfectly load-balancing highly irregular graph algorithms.
+To formalize our Graph Rasterization pipeline we define a six-primitive abstraction.
+
+\subsection{Custom Data Types}
+The pipeline requires four contextual data types to define the state at various stages:
+\begin{itemize}
+    \item \textbf{GraphSceneElement:} The logical element of the Graph Scene evaluated by the Task shader (e.g., an Edge, a Vertex).
+    \item \textbf{MeshletWorkItem:} The atomic, perfectly balanced unit of work assigned to a single Mesh thread within an algorithmic meshlet.
+    \item \textbf{MeshletPayload:} The cooperative shared-memory structure passed from the Task to the Mesh shader. It acts as the mathematical definition of the algorithmic meshlet, containing scheduling metadata and any base information required to reconstruct the surviving \texttt{MeshletWorkItem}s.
+    \item \textbf{StateUpdate:} The output of a single Mesh thread's execution, representing a delta to be applied to the global graph state.
+\end{itemize}
+
+\subsection{Task Shader Primitives (Scheduling and Culling)}
+The Task Shader relies on three primitives to evaluate the Graph Scene and dynamically prepare the algorithmic meshlets:
+\begin{enumerate}
+    \item \texttt{Map(GlobalThreadID) $\rightarrow$ GraphSceneElement}: Maps the raw hardware global thread ID to a logical \texttt{GraphSceneElement}. To optimize memory bandwidth, this function should be extremely lightweight, deferring expensive memory reads until after the culling stage.
+    \item \texttt{Cull(GraphSceneElement) $\rightarrow$ uint}: Evaluates if the element survives (algorithmic occlusion) and returns the number of \texttt{MeshletWorkItem}s it will spawn. If it returns 0, the element is culled and spawns no work.
+    \item \texttt{Pack(GraphSceneElement, uint workload\_size) $\rightarrow$ MeshletPayload}: A cooperative function that assembles the algorithmic meshlet. It takes the scene element and its calculated workload size and builds scheduling offsets and packs them into the \texttt{MeshletPayload}.
+\end{enumerate}
+
+\subsection{Mesh Shader Primitives (Execution)}
+The dynamically spawned Mesh Shader executes the balanced workloads using three primitives:
+\begin{enumerate}
+    \item \texttt{Unpack(MeshletPayload, LocalThreadID) $\rightarrow$ MeshletWorkItem}: Reconstructs the exact \texttt{MeshletWorkItem} that a specific thread is responsible for computing, using the cooperative \texttt{MeshletPayload} and the local Mesh thread ID.
+    \item \texttt{Work(MeshletWorkItem) $\rightarrow$ StateUpdate}: The core algorithmic logic. It executes the pure compute required for the work item and returns a \texttt{StateUpdate}.
+    \item \texttt{Aggregate(StateUpdate)}: A cooperative function that takes the update from every thread in the wave, reduces them (e.g., using \texttt{WaveActiveSum}), and atomically applies them to the global graph state.
+\end{enumerate}
+
+\section{Triangle Counting (TC)}
+
+Triangle Counting is a fundamental graph analytics workload used to measure the clustering and connectivity of a network. The algorithm identifies all unique triangles (a set of three mutually connected vertices) within an undirected graph. Computationally, finding a triangle on an edge $(u, v)$ boils down to a set intersection problem: we intersect the adjacency list of vertex $u$ with the adjacency list of vertex $v$. For every common neighbor $w$ found in both lists, a triangle $(u, v, w)$ is formed.
+
+To avoid counting the same triangle multiple times and to eliminate redundant work, the graph is typically oriented (e.g., enforcing $u < v$). Using our six-primitive abstraction, we can implement Triangle Counting with perfect load balancing, dynamically orienting the graph on the fly (algorithmic occlusion) without ever rebuilding it in memory.
+
+\subsection{Pipeline Execution Flow}
+Before formally defining the abstraction, it is helpful to trace how the workload flows conceptually through the two stages of our pipeline:
+
+\paragraph{1. The Task Stage (Dynamic Orientation and Amplification):}
+We start by loosely assigning one Task thread to every edge in the graph. To prevent counting the same triangle multiple times, the Task thread dynamically enforces our orientation rule: it only proceeds if $u < v$. If the edge violates this, the thread immediately discards it. However, the culling does not stop there. To guarantee each triangle $(u, v, w)$ is counted exactly once, we mathematically enforce a strict total ordering: $u < v < w$. For a surviving edge $(u, v)$, the Task thread calculates how many neighbors in $u$'s list and $v$'s list are strictly greater than $v$. The exact amount of intersection work required is strictly bounded by the minimum of these two bounded lists. The Task Shader then cooperatively chunks these required intersection tests into perfectly uniform algorithmic meshlets.
+
+\paragraph{2. The Mesh Stage (Load-Balanced Intersection):}
+The Mesh Shader receives the algorithmic meshlet. Instead of assigning a whole edge to a single thread (which causes severe load imbalance on hub vertices), our pipeline assigns each individual thread exactly one candidate neighbor $w$ from the smaller adjacency list. That thread's sole responsibility is to perform a binary search for $w$ within the larger adjacency list. Because the workload is sliced at the granularity of individual list elements, thread divergence is completely eliminated. Finally, the threads cooperatively sum their found triangles and update the global counter.
+
+\subsection{Abstraction}
+\subsubsection{Data Types}
+\begin{itemize}
+    \item \textbf{GraphSceneElement:} An edge $(u, v)$.
+    \item \textbf{MeshletPayload:} A shared memory structure containing the base edge ID and an array of prefix-sum offsets used to map Mesh threads to their respective edges.
+    \item \textbf{MeshletWorkItem:} A candidate neighbor $w$ extracted from the smaller adjacency list, along with the boundaries of the larger adjacency list.
+    \item \textbf{StateUpdate:} A boolean indicating whether a triangle was found.
+\end{itemize}
+
+\subsubsection{Primitives}
+
+\begin{itemize}
+    \item \textbf{Task Shader Primitives}
+    \begin{itemize}
+        \item $\textbf{Map}(id) \rightarrow (u, v)$: Maps the global thread $id$ directly to an undirected edge $(u, v)$ in the graph.
+        \item $\textbf{Cull}(u, v) \rightarrow \text{workload}$: Enforces algorithmic occlusion by dynamically orienting the graph to satisfy $u < v < w$. If $u < v$, it calculates $n_u = |\{w \in \text{adj}(u) \mid w > v\}|$ and $n_v = |\{w \in \text{adj}(v) \mid w > v\}|$. It returns the workload size $\min(n_u, n_v)$. Otherwise, it returns $0$, discarding the edge.
+        \item $\textbf{Pack}((u, v), \text{workload}) \rightarrow \text{Payload}$: Cooperatively computes a prefix-sum over the workloads of all surviving edges in the thread group to construct the scheduling metadata.
+    \end{itemize}
+    \item \textbf{Mesh Shader Primitives}
+    \begin{itemize}
+        \item $\textbf{Unpack}(\text{Payload}, id) \rightarrow (w, L_{large})$: Resolves the local thread $id$ using the Payload's prefix-sums to find its parent edge $(u, v)$. It dynamically bounds the adjacency lists to only include elements strictly greater than $v$, identifying the smaller bounded list $L_{small}$ and the larger bounded list $L_{large}$. It then extracts its assigned candidate neighbor $w \in L_{small}$ and returns $w$ alongside the bounds of $L_{large}$.
+        \item $\textbf{Work}(w, L_{large}) \rightarrow r$: Performs a binary search for the vertex $w$ within $L_{large}$. Returns $r=1$ if a triangle is found, and $r=0$ otherwise.
+        \item $\textbf{Aggregate}(r)$: Cooperatively sums all results $r$ across the meshlet and atomically adds the total to the global triangle count.
+    \end{itemize}
+\end{itemize}
+
+\section{Breadth-First Search (BFS)}
+
+Breadth-First Search is a core graph traversal algorithm that explores a graph level by level, starting from a source vertex. In each iteration, it processes a ``frontier'' of active vertices, exploring all their outgoing edges to discover unvisited neighbors, which then form the frontier for the next iteration. 
+
+Unlike Triangle Counting, which performs a static scalar reduction, BFS requires dynamically building a queue (the next frontier) during execution. Using our six-primitive abstraction, we can implement BFS to perform cooperative queue insertions with perfect load balancing, avoiding the severe thread divergence that typically plagues frontier expansion on hub vertices.
+
+\subsection{Pipeline Execution Flow}
+
+\paragraph{1. The Task Stage (Frontier Expansion):}
+We start by assigning one Task thread to every active vertex in the current frontier. For standard BFS, there is no algorithmic occlusion at this stage; every outgoing edge from a frontier vertex must be explored. Therefore, the Task thread calculates its workload size simply as the out-degree of its assigned vertex. The Task Shader then cooperatively chunks these outgoing edge traversals into perfectly uniform algorithmic meshlets. Because the vertices in the frontier are scattered across the graph, the Task Shader also packs the actual vertex IDs into the shared memory payload.
+
+\paragraph{2. The Mesh Stage (Cooperative Queue Insertion):}
+The Mesh Shader receives the algorithmic meshlet. Our pipeline assigns each individual thread exactly one target neighbor $w$ across an outgoing edge. The thread's responsibility is to atomically check if $w$ has been visited. If it successfully claims the unvisited neighbor, it marks it as visited and records the new distance. Finally, the Mesh group cooperatively aggregates these successes: they compute exactly how many new vertices were discovered, atomically reserve a contiguous block in the global next-frontier array, and write the newly discovered neighbors into it.
+
+\subsection{Abstraction}
+\subsubsection{Data Types}
+\begin{itemize}
+    \item \textbf{GraphSceneElement:} A vertex $v$ from the current active frontier.
+    \item \textbf{MeshletPayload:} A shared memory structure containing an array of parent vertex IDs and an array of prefix-sum offsets used to map Mesh threads to their parent vertices.
+    \item \textbf{MeshletWorkItem:} A specific target neighbor $w$ across an outgoing edge.
+    \item \textbf{StateUpdate:} A tuple $(added, w)$ indicating whether the thread successfully claimed the unvisited neighbor $w$, and the neighbor's ID.
+\end{itemize}
+
+\subsubsection{Primitives}
+
+\begin{itemize}
+    \item \textbf{Task Shader Primitives}
+    \begin{itemize}
+        \item $\textbf{Map}(id) \rightarrow v$: Maps the global thread $id$ to a vertex $v$ in the current frontier array.
+        \item $\textbf{Cull}(v) \rightarrow \text{workload}$: Returns the out-degree of vertex $v$ as the workload size.
+        \item $\textbf{Pack}(v, \text{workload}) \rightarrow \text{Payload}$: Writes the scattered vertex $v$ into the Payload's vertex array, and cooperatively computes a prefix-sum over the workloads to construct the scheduling offsets.
+    \end{itemize}
+    \item \textbf{Mesh Shader Primitives}
+    \begin{itemize}
+        \item $\textbf{Unpack}(\text{Payload}, id) \rightarrow w$: Resolves the local thread $id$ using the Payload's prefix-sums to find its parent vertex $v$. It calculates its specific local edge offset, fetches the target neighbor $w$ from memory, and returns it.
+        \item $\textbf{Work}(w) \rightarrow (added, w)$: Atomically checks and sets the visited bitmask for $w$. If previously unvisited, it records the new distance and returns $added = 1$. Otherwise, returns $added = 0$.
+        \item $\textbf{Aggregate}(added, w)$: Cooperatively computes the total number of newly discovered vertices in the meshlet. A single thread atomically reserves space in the global next-frontier array, and threads with $added = 1$ write their neighbor $w$ to this reserved memory block.
+    \end{itemize}
+\end{itemize}
+
+
+\section{PageRank (PR)}
+
+PageRank computes the importance of vertices by iteratively simulating a random walk over the graph. In a standard pull-based implementation, each vertex updates its rank by summing the contributions from all its incoming neighbors. 
+
+While Triangle Counting processes edges and BFS processes a dynamically changing frontier, PageRank processes the entire set of vertices in every iteration. Using our abstraction, we can map this workload to the pipeline, incorporating a segmented cooperative reduction in the Mesh Shader to efficiently aggregate floating-point values.
+
+\subsection{Pipeline Execution Flow}
+
+\paragraph{1. The Task Stage (Vertex Evaluation):}
+We assign a Task thread to every vertex in the graph. Since every vertex must pull PageRank values from its incoming edges during an iteration, there is no algorithmic occlusion. The Task thread calculates its workload size, which is simply the in-degree of its assigned vertex. Because the vertices are processed in a contiguous block by the Task group, the Task Shader bypasses complex prefix sums. It simply chunks the incoming edge traversals into uniform algorithmic meshlets and packs the contiguous vertex boundaries into the payload.
+
+\paragraph{2. The Mesh Stage (Segmented Reduction):}
+The Mesh Shader receives the algorithmic meshlet. Each Mesh thread is assigned exactly one incoming edge. The thread resolves its destination vertex $dst$ and fetches the source vertex $src$. It computes the PageRank contribution pulled from $src$. Finally, the Mesh group cooperatively aggregates these contributions. Because incoming edges belonging to the same destination vertex are contiguous, the threads perform a segmented reduction to sum the values locally before updating the global PageRank array.
+
+\subsection{Abstraction}
+\subsubsection{Data Types}
+\begin{itemize}
+    \item \textbf{GraphSceneElement:} A destination vertex $v$.
+    \item \textbf{MeshletPayload:} A shared memory structure containing the contiguous vertex boundaries $(v_{start}, v_{end})$ evaluated by the Task group.
+    \item \textbf{MeshletWorkItem:} A specific incoming edge, represented by its destination and source $(dst, src)$.
+    \item \textbf{StateUpdate:} A tuple $(dst, pull)$ containing the PageRank value pulled from the source vertex to the destination vertex.
+\end{itemize}
+
+\subsubsection{Primitives}
+
+\begin{itemize}
+    \item \textbf{Task Shader Primitives}
+    \begin{itemize}
+        \item $\textbf{Map}(id) \rightarrow v$: Maps the global thread $id$ to a vertex $v$ in the graph.
+        \item $\textbf{Cull}(v) \rightarrow \text{workload}$: Returns the in-degree of vertex $v$ as the workload size.
+        \item $\textbf{Pack}(v, \text{workload}) \rightarrow \text{Payload}$: Evaluates the contiguous range of vertices assigned to the Task group and simply packs the boundaries $(v_{start}, v_{end})$ into the Payload.
+    \end{itemize}
+    \item \textbf{Mesh Shader Primitives}
+    \begin{itemize}
+        \item $\textbf{Unpack}(\text{Payload}, id) \rightarrow (dst, src)$: Resolves the local thread $id$ by binary searching the graph's row offsets between $v_{start}$ and $v_{end}$ to find its parent vertex $dst$. It calculates its specific local edge offset, fetches the source vertex $src$ from the column indices, and returns $(dst, src)$.
+        \item $\textbf{Work}(dst, src) \rightarrow (dst, pull)$: Computes the PageRank contribution $pull = \frac{\text{past\_pr}[src]}{\text{out\_degree}[src]}$.
+        \item $\textbf{Aggregate}(dst, pull)$: Performs a segmented wave reduction. Threads cooperatively sum their $pull$ values for identical $dst$ vertices. Only the thread at the boundary of a $dst$ segment atomically adds the sum to the global PageRank array.
+    \end{itemize}
+\end{itemize}
 
 \end{document}
