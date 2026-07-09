@@ -44,7 +44,7 @@ void test_pr(int num_arguments, char** argument_array) {
   srand(time(NULL));
 
   weight_t alpha = 0.85;
-  weight_t tol = 1e-6;
+  weight_t tol = 1e-4;
 
   size_t n_vertices = G.get_number_of_vertices();
   size_t n_edges = G.get_number_of_edges();

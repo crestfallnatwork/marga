@@ -187,7 +187,7 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
     float err = thrust::transform_reduce(
         policy, thrust::counting_iterator<vertex_t>(0),
         thrust::counting_iterator<vertex_t>(n_vertices), abs_diff,
-        (weight_t)0.0, thrust::maximum<weight_t>());
+        (weight_t)0.0, thrust::plus<weight_t>());
 
     return err < tol;
   }
@@ -226,7 +226,9 @@ float run(graph_t& G,
   props.self_manage_frontiers = true;
 
   enactor_type enactor(&problem, context, props);
-  return enactor.enact();
+  float time = enactor.enact();
+  std::cout << "PR Iterations : " << enactor.iteration << std::endl;
+  return time;
   // </boiler-plate>
 }
 
