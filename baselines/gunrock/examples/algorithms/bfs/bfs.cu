@@ -101,7 +101,9 @@ void test_bfs(int num_arguments, char** argument_array) {
   // Print info for last run
   std::cout << "Source : " << source_vect.back() << "\n";
   print::head(distances, 40, "GPU distances");
-  std::cout << "GPU Elapsed Time : " << run_times[n_runs - 1] << " (ms)"
+  float total_time = 0;
+  for(float t : run_times) total_time += t;
+  std::cout << "GPU Elapsed Time : " << total_time / n_runs << " (ms)"
             << std::endl;
 
   // --

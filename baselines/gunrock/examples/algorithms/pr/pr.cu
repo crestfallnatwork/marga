@@ -87,7 +87,9 @@ void test_pr(int num_arguments, char** argument_array) {
 
   print::head(p, 40, "GPU rank");
 
-  std::cout << "GPU Elapsed Time : " << run_times[params.num_runs - 1]
+  float total_time = 0;
+  for(float t : run_times) total_time += t;
+  std::cout << "GPU Elapsed Time : " << total_time / params.num_runs
             << " (ms)" << std::endl;
 }
 
