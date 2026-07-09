@@ -11,7 +11,7 @@ ROAD_NETWORKS = [
 ]
 
 SOCIAL_NETWORKS = [
-    "soc-LiveJournal1",
+    # "soc-LiveJournal1",
     # "hollywood-2009",
     # "com-Orkut",
     # "soc-twitter-2010",
@@ -20,14 +20,14 @@ SOCIAL_NETWORKS = [
 ]
 
 SYNTHETIC = [
-    "delaunay_n24",
+    # "delaunay_n24",
     # "kron_g500-logn21",
     # "GAP-kron",
     # "GAP-urand",
 ]
 
 WEB_CRAWLS = [
-    "indochina-2004",
+    # "indochina-2004",
     # "uk-2005",
     # "webbase-2001",
     # "it-2004",
@@ -35,7 +35,7 @@ WEB_CRAWLS = [
 ]
 
 MISC = [
-    "kmer_V1r",
+    # "kmer_V1r",
     # "mawi_201512020330",
     # "nlpkkt240",
 ]
@@ -111,8 +111,8 @@ def main():
         results[graph]['PR'] = parse_time(pr_out) if pr_ok else "OOM"
         
         # 2. Triangle Counting
-        print(f"Running TC...")
-        tc_cmd = [os.path.join(BUILD_DIR, "tc"), "-m", mtx_path]
+        print(f"Running TC ({NUM_RUNS} runs)...")
+        tc_cmd = [os.path.join(BUILD_DIR, "tc"), "-m", mtx_path, "-n", str(NUM_RUNS)]
         tc_out, tc_ok = run_command(tc_cmd)
         results[graph]['TC'] = parse_time(tc_out) if tc_ok else "OOM"
         

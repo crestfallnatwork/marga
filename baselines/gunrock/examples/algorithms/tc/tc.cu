@@ -14,6 +14,7 @@ struct parameters_t {
   cxxopts::Options options;
   bool validate;
   bool reduce_all_triangles;
+  int num_runs;
 
   /**
    * @brief Construct a new parameters object and parse command line arguments.
@@ -28,6 +29,7 @@ struct parameters_t {
         "validate", "CPU validation",
         cxxopts::value<bool>()->default_value("false"))(
         "m,market", "Matrix file", cxxopts::value<std::string>())(
+        "n,num-runs", "Number of runs", cxxopts::value<int>()->default_value("1"))(
         "r,reduce",
         "Compute a single triangle count for the entire graph (default = "
         "false)",
@@ -43,6 +45,7 @@ struct parameters_t {
     filename = result["market"].as<std::string>();
     validate = result["validate"].as<bool>();
     reduce_all_triangles = result["reduce"].as<bool>();
+    num_runs = result["num-runs"].as<int>();
   }
 };
 
@@ -115,8 +118,12 @@ void test_tc(int num_arguments, char** argument_array) {
   // GPU Run
 
   std::size_t total_triangles = 0;
-  float gpu_elapsed = tc::run(G, params.reduce_all_triangles,
-                              triangles_count.data().get(), &total_triangles);
+  float total_time = 0;
+  for (int i = 0; i < params.num_runs; ++i) {
+    total_time += tc::run(G, params.reduce_all_triangles,
+                          triangles_count.data().get(), &total_triangles);
+  }
+  float gpu_elapsed = total_time / params.num_runs;
 
   // --
   // Log
