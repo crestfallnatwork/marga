@@ -1,5 +1,6 @@
 #include <nvbench/nvbench.cuh>
 #include <cxxopts.hpp>
+#include <set>
 #include <gunrock/algorithms/algorithms.hxx>
 #include <gunrock/algorithms/tc.hxx>
 
@@ -77,8 +78,28 @@ void tc_bench(nvbench::state& state) {
   io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
   auto [properties, coo] = mm.load(filename_);
   if (!properties.symmetric) {
-    std::cerr << "Error: input matrix must be symmetric" << std::endl;
-    exit(1);
+    std::cout << "Symmetrizing input matrix on the fly..." << std::endl;
+    std::set<std::pair<vertex_t, vertex_t>> edges;
+    for (std::size_t i = 0; i < coo.number_of_nonzeros; ++i) {
+      edges.insert({coo.row_indices[i], coo.column_indices[i]});
+      if (coo.row_indices[i] != coo.column_indices[i]) {
+        edges.insert({coo.column_indices[i], coo.row_indices[i]});
+      }
+    }
+    
+    coo.number_of_nonzeros = edges.size();
+    coo.row_indices.resize(coo.number_of_nonzeros);
+    coo.column_indices.resize(coo.number_of_nonzeros);
+    coo.nonzero_values.resize(coo.number_of_nonzeros);
+    
+    std::size_t idx = 0;
+    for (auto const& edge : edges) {
+      coo.row_indices[idx] = edge.first;
+      coo.column_indices[idx] = edge.second;
+      coo.nonzero_values[idx] = 1.0;
+      ++idx;
+    }
+    properties.symmetric = true;
   }
 
   format::csr_t<memory_space_t::device, vertex_t, edge_t, weight_t> csr;
