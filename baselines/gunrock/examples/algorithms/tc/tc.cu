@@ -1,5 +1,5 @@
 #include <vector>
-#include <set>
+#include <algorithm>
 
 #include <gunrock/algorithms/tc.hxx>
 #include "tc_cpu.hxx"
@@ -72,26 +72,28 @@ void test_tc(int num_arguments, char** argument_array) {
     io::matrix_market_t<vertex_t, edge_t, weight_t> mm;
     auto [properties, coo] = mm.load(params.filename);
     if (!properties.symmetric) {
-      std::cout << "Symmetrizing input matrix on the fly..." << std::endl;
-      std::set<std::pair<vertex_t, vertex_t>> edges;
+      std::cout << "Symmetrizing input matrix on the fly using contiguous vector..." << std::endl;
+      std::vector<std::pair<vertex_t, vertex_t>> edges;
+      edges.reserve(coo.number_of_nonzeros * 2);
       for (std::size_t i = 0; i < coo.number_of_nonzeros; ++i) {
-        edges.insert({coo.row_indices[i], coo.column_indices[i]});
+        edges.push_back({coo.row_indices[i], coo.column_indices[i]});
         if (coo.row_indices[i] != coo.column_indices[i]) {
-          edges.insert({coo.column_indices[i], coo.row_indices[i]});
+          edges.push_back({coo.column_indices[i], coo.row_indices[i]});
         }
       }
+      
+      std::sort(edges.begin(), edges.end());
+      edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
       
       coo.number_of_nonzeros = edges.size();
       coo.row_indices.resize(coo.number_of_nonzeros);
       coo.column_indices.resize(coo.number_of_nonzeros);
       coo.nonzero_values.resize(coo.number_of_nonzeros);
       
-      std::size_t idx = 0;
-      for (auto const& edge : edges) {
-        coo.row_indices[idx] = edge.first;
-        coo.column_indices[idx] = edge.second;
+      for (std::size_t idx = 0; idx < edges.size(); ++idx) {
+        coo.row_indices[idx] = edges[idx].first;
+        coo.column_indices[idx] = edges[idx].second;
         coo.nonzero_values[idx] = 1.0;
-        ++idx;
       }
       properties.symmetric = true;
     }
