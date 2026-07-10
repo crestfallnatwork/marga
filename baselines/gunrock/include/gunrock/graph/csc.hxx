@@ -127,7 +127,7 @@ class graph_csc_t {
     // Set raw pointers
     offsets = raw_pointer_cast(csc.column_offsets.data());
     indices = raw_pointer_cast(csc.row_indices.data());
-    values = raw_pointer_cast(csc.nonzero_values.data());
+    /* values = raw_pointer_cast(csc.nonzero_values.data()); */ values = nullptr;
   }
 
  private:
@@ -137,7 +137,7 @@ class graph_csc_t {
 
   edge_type* offsets;
   vertex_type* indices;
-  weight_type* values;
+  /* weight_type* values; */ weight_type* values = nullptr;
 
 };  // struct graph_csc_t
 

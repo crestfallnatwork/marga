@@ -95,12 +95,10 @@ void tc_bench(nvbench::state& state) {
     coo.number_of_nonzeros = edges.size();
     coo.row_indices.resize(coo.number_of_nonzeros);
     coo.column_indices.resize(coo.number_of_nonzeros);
-    coo.nonzero_values.resize(coo.number_of_nonzeros);
     
     for (std::size_t idx = 0; idx < edges.size(); ++idx) {
       coo.row_indices[idx] = edges[idx].first;
       coo.column_indices[idx] = edges[idx].second;
-      coo.nonzero_values[idx] = 1.0;
     }
     properties.symmetric = true;
   }

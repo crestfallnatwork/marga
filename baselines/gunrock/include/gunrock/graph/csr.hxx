@@ -174,7 +174,7 @@ class graph_csr_t {
 
   __host__ __device__ __forceinline__ weight_type
   get_edge_weight(edge_type const& e) const {
-    return thread::load(&values[e]);
+    return 1.0; /* return thread::load(&values[e]); */
   }
 
   // Representation specific functions
@@ -222,7 +222,7 @@ class graph_csr_t {
     // Set raw pointers
     offsets = raw_pointer_cast(csr.row_offsets.data());
     indices = raw_pointer_cast(csr.column_indices.data());
-    values = raw_pointer_cast(csr.nonzero_values.data());
+    /* values = raw_pointer_cast(csr.nonzero_values.data()); */ values = nullptr;
   }
 
  private:
@@ -232,7 +232,7 @@ class graph_csr_t {
 
   edge_type* offsets;
   vertex_type* indices;
-  weight_type* values;
+  /* weight_type* values; */ weight_type* values = nullptr;
 
 };  // struct graph_csr_t
 

@@ -35,23 +35,21 @@ struct csr_t {
 
   vector_t<offset_t, space> row_offsets;    // Ap
   vector_t<index_t, space> column_indices;  // Aj
-  vector_t<value_t, space> nonzero_values;  // Ax
+  // vector_t<value_t, space> nonzero_values;  // Ax
 
   csr_t()
       : number_of_rows(0),
         number_of_columns(0),
         number_of_nonzeros(0),
         row_offsets(),
-        column_indices(),
-        nonzero_values() {}
+        column_indices() {}
 
   csr_t(index_t r, index_t c, offset_t nnz)
       : number_of_rows(r),
         number_of_columns(c),
         number_of_nonzeros(nnz),
         row_offsets(r + 1),
-        column_indices(nnz),
-        nonzero_values(nnz) {}
+        column_indices(nnz) {} /* nonzero_values(nnz) */
 
   ~csr_t() {}
 
@@ -65,8 +63,7 @@ struct csr_t {
         number_of_columns(rhs.number_of_columns),
         number_of_nonzeros(rhs.number_of_nonzeros),
         row_offsets(rhs.row_offsets),
-        column_indices(rhs.column_indices),
-        nonzero_values(rhs.nonzero_values) {}
+        column_indices(rhs.column_indices) {} /* nonzero_values(rhs.nonzero_values) */
 
   /**
    * @brief Convert a Coordinate Sparse Format into Compressed Sparse Row
@@ -121,7 +118,7 @@ struct csr_t {
       index_t dest = Ap[row];
 
       Aj[dest] = coo.column_indices[n];
-      Ax[dest] = coo.nonzero_values[n];
+      // Ax[dest] = coo.nonzero_values[n];
 
       ++Ap[row];
     }
@@ -134,7 +131,7 @@ struct csr_t {
 
     row_offsets = Ap;
     column_indices = Aj;
-    nonzero_values = Ax;
+    // nonzero_values = Ax;
 
     return *this;  // CSR representation (with possible duplicates)
   }
@@ -152,14 +149,14 @@ struct csr_t {
 
     row_offsets.resize(number_of_rows + 1);
     column_indices.resize(number_of_nonzeros);
-    nonzero_values.resize(number_of_nonzeros);
+    // nonzero_values.resize(number_of_nonzeros);
 
     if (space == memory_space_t::device) {
       assert(space == memory_space_t::device);
 
       thrust::host_vector<offset_t> h_row_offsets(number_of_rows + 1);
       thrust::host_vector<index_t> h_column_indices(number_of_nonzeros);
-      thrust::host_vector<value_t> h_nonzero_values(number_of_nonzeros);
+      // thrust::host_vector<value_t> h_nonzero_values(number_of_nonzeros);
 
       error::throw_if_exception(
           fread(memory::raw_pointer_cast(h_row_offsets.data()),
@@ -167,14 +164,14 @@ struct csr_t {
       error::throw_if_exception(
           fread(memory::raw_pointer_cast(h_column_indices.data()),
                 sizeof(index_t), number_of_nonzeros, file) != 0);
-      error::throw_if_exception(
+      /* error::throw_if_exception(
           fread(memory::raw_pointer_cast(h_nonzero_values.data()),
-                sizeof(value_t), number_of_nonzeros, file) != 0);
+                sizeof(value_t), number_of_nonzeros, file) != 0); */
 
       // Copy data from host to device
       row_offsets = h_row_offsets;
       column_indices = h_column_indices;
-      nonzero_values = h_nonzero_values;
+      // nonzero_values = h_nonzero_values;
 
     } else {
       assert(space == memory_space_t::host);
@@ -185,9 +182,9 @@ struct csr_t {
       error::throw_if_exception(
           fread(memory::raw_pointer_cast(column_indices.data()),
                 sizeof(index_t), number_of_nonzeros, file) != 0);
-      error::throw_if_exception(
+      /* error::throw_if_exception(
           fread(memory::raw_pointer_cast(nonzero_values.data()),
-                sizeof(value_t), number_of_nonzeros, file) != 0);
+                sizeof(value_t), number_of_nonzeros, file) != 0); */
     }
   }
 
@@ -205,14 +202,14 @@ struct csr_t {
 
       thrust::host_vector<offset_t> h_row_offsets(row_offsets);
       thrust::host_vector<index_t> h_column_indices(column_indices);
-      thrust::host_vector<value_t> h_nonzero_values(nonzero_values);
+      // thrust::host_vector<value_t> h_nonzero_values(nonzero_values);
 
       fwrite(memory::raw_pointer_cast(h_row_offsets.data()), sizeof(offset_t),
              number_of_rows + 1, file);
       fwrite(memory::raw_pointer_cast(h_column_indices.data()), sizeof(index_t),
              number_of_nonzeros, file);
-      fwrite(memory::raw_pointer_cast(h_nonzero_values.data()), sizeof(value_t),
-             number_of_nonzeros, file);
+      /* fwrite(memory::raw_pointer_cast(h_nonzero_values.data()), sizeof(value_t),
+             number_of_nonzeros, file); */
     } else {
       assert(space == memory_space_t::host);
 
@@ -220,8 +217,8 @@ struct csr_t {
              number_of_rows + 1, file);
       fwrite(memory::raw_pointer_cast(column_indices.data()), sizeof(index_t),
              number_of_nonzeros, file);
-      fwrite(memory::raw_pointer_cast(nonzero_values.data()), sizeof(value_t),
-             number_of_nonzeros, file);
+      /* fwrite(memory::raw_pointer_cast(nonzero_values.data()), sizeof(value_t),
+             number_of_nonzeros, file); */
     }
 
     fclose(file);

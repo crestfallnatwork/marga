@@ -167,7 +167,7 @@ struct matrix_market_t {
         // set and adjust from 1-based to 0-based indexing
         coo.row_indices[i] = (vertex_t)row_index - 1;
         coo.column_indices[i] = (vertex_t)col_index - 1;
-        coo.nonzero_values[i] =
+        // coo.nonzero_values[i] =
             (weight_t)1.0;  // use value 1.0 for all nonzero entries
       }
     } else if (mm_is_real(code) || mm_is_integer(code)) {
@@ -193,7 +193,7 @@ struct matrix_market_t {
 
         coo.row_indices[i] = (vertex_t)row_index - 1;
         coo.column_indices[i] = (vertex_t)col_index - 1;
-        coo.nonzero_values[i] = (weight_t)weight;
+        // coo.nonzero_values[i] = (weight_t)weight;
       }
     } else {
       std::cerr << "Unrecognized matrix market format type" << std::endl;
@@ -226,22 +226,22 @@ struct matrix_market_t {
         if (coo.row_indices[i] != coo.column_indices[i]) {
           _I[ptr] = coo.row_indices[i];
           _J[ptr] = coo.column_indices[i];
-          _V[ptr] = coo.nonzero_values[i];
+          // _V[ptr] = coo.nonzero_values[i];
           ++ptr;
           _J[ptr] = coo.row_indices[i];
           _I[ptr] = coo.column_indices[i];
-          _V[ptr] = coo.nonzero_values[i];
+          // _V[ptr] = coo.nonzero_values[i];
           ++ptr;
         } else {
           _I[ptr] = coo.row_indices[i];
           _J[ptr] = coo.column_indices[i];
-          _V[ptr] = coo.nonzero_values[i];
+          // _V[ptr] = coo.nonzero_values[i];
           ++ptr;
         }
       }
       coo.row_indices = new_I;
       coo.column_indices = new_J;
-      coo.nonzero_values = new_V;
+      // coo.nonzero_values = new_V;
       coo.number_of_nonzeros = _nonzeros;
     }  // end symmetric case
     else {

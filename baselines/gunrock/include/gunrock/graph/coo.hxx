@@ -124,7 +124,7 @@ class graph_coo_t {
     // Set raw pointers
     row_indices = raw_pointer_cast(coo.row_indices.data());
     column_indices = raw_pointer_cast(coo.column_indices.data());
-    values = raw_pointer_cast(coo.nonzero_values.data());
+    /* values = raw_pointer_cast(coo.nonzero_values.data()); */ values = nullptr;
   }
 
  private:
@@ -134,7 +134,7 @@ class graph_coo_t {
 
   vertex_type* row_indices;
   vertex_type* column_indices;
-  weight_type* values;
+  /* weight_type* values; */ weight_type* values = nullptr;
 };  // struct graph_coo_t
 
 }  // namespace graph

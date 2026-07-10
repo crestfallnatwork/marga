@@ -27,23 +27,21 @@ struct coo_t {
 
   vector_t<index_t, space> row_indices;     // I
   vector_t<index_t, space> column_indices;  // J
-  vector_t<value_t, space> nonzero_values;  // V
+  // vector_t<value_t, space> nonzero_values;  // V
 
   coo_t()
       : number_of_rows(0),
         number_of_columns(0),
         number_of_nonzeros(0),
         row_indices(),
-        column_indices(),
-        nonzero_values() {}
+        column_indices() {}
 
   coo_t(index_t r, index_t c, nz_size_t nnz)
       : number_of_rows(r),
         number_of_columns(c),
         number_of_nonzeros(nnz),
         row_indices(nnz),
-        column_indices(nnz),
-        nonzero_values(nnz) {}
+        column_indices(nnz) {} /* nonzero_values(nnz) */
 
   ~coo_t() {}
 
@@ -66,7 +64,7 @@ struct coo_t {
 
     row_indices.resize(number_of_nonzeros);
     column_indices.resize(number_of_nonzeros);
-    nonzero_values.resize(number_of_nonzeros);
+    // nonzero_values.resize(number_of_nonzeros);
 
     // Convert offsets to indices
     gunrock::graph::convert::offsets_to_indices<memory_space_t::host>(
@@ -75,7 +73,7 @@ struct coo_t {
         number_of_nonzeros);
 
     column_indices = csr.column_indices;
-    nonzero_values = csr.nonzero_values;
+    // nonzero_values = csr.nonzero_values;
 
     return *this;  // COO representation
   }

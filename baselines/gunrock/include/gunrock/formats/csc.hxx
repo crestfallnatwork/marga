@@ -28,23 +28,21 @@ struct csc_t {
 
   vector_t<offset_t, space> column_offsets;
   vector_t<index_t, space> row_indices;
-  vector_t<value_t, space> nonzero_values;
+  // vector_t<value_t, space> nonzero_values;
 
   csc_t()
       : number_of_rows(0),
         number_of_columns(0),
         number_of_nonzeros(0),
         column_offsets(),
-        row_indices(),
-        nonzero_values() {}
+        row_indices() {}
 
   csc_t(index_t r, index_t c, index_t nnz)
       : number_of_rows(r),
         number_of_columns(c),
         number_of_nonzeros(nnz),
         column_offsets(c + 1),
-        row_indices(nnz),
-        nonzero_values(nnz) {}
+        row_indices(nnz) {} /* nonzero_values(nnz) */
 
   ~csc_t() {}
 
@@ -73,9 +71,9 @@ struct csc_t {
     // Resize vectors
     column_offsets.resize(csr.number_of_columns + 1);
     row_indices.resize(number_of_nonzeros);
-    nonzero_values.resize(number_of_nonzeros);
+    // nonzero_values.resize(number_of_nonzeros);
 
-    nonzero_values = csr.nonzero_values;
+    // nonzero_values = csr.nonzero_values;
 
     // Convert row offsets to indices
     gunrock::graph::convert::offsets_to_indices<space>(
@@ -91,7 +89,7 @@ struct csc_t {
 
     thrust::sort_by_key(exec, temp.begin(), temp.end(),
                         thrust::make_zip_iterator(thrust::make_tuple(
-                            row_indices.begin(), nonzero_values.begin())));
+                            row_indices.begin() /* , nonzero_values.begin() */ )));
 
     gunrock::graph::convert::indices_to_offsets<space>(
         memory::raw_pointer_cast(temp.data()), number_of_nonzeros,
