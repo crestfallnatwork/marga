@@ -261,10 +261,20 @@ def process_dataset(dataset_dir):
 
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    for item in sorted(os.listdir(base_dir)):
-        dataset_dir = os.path.join(base_dir, item)
+    
+    if len(sys.argv) > 1:
+        target_graph = sys.argv[1]
+        dataset_dir = os.path.join(base_dir, target_graph)
         if os.path.isdir(dataset_dir):
             process_dataset(dataset_dir)
+        else:
+            print(f"Error: Dataset directory '{target_graph}' not found.")
+            sys.exit(1)
+    else:
+        for item in sorted(os.listdir(base_dir)):
+            dataset_dir = os.path.join(base_dir, item)
+            if os.path.isdir(dataset_dir):
+                process_dataset(dataset_dir)
 
 if __name__ == "__main__":
     main()
