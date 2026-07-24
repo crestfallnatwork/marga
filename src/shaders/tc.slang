@@ -25,6 +25,7 @@ uint64_t UpperBound<T>(T* arr, uint64_t low, uint64_t high, IFunc<bool, T> great
 struct SharedTCPayload {
     uint64_t edge_start;
     uint32_t u_start;
+    uint v_list_offsets[WAVE_SIZE];
     uint offsets[WAVE_SIZE+1];
 };
 groupshared SharedTCPayload tcPayload;
@@ -80,6 +81,7 @@ void tc_task(
                                         (uint32_t vertex) => (vertex > v));
             uint n_v = tcIn.list_offset[v+1] - v_start;
             uint n_u = tcIn.list_offset[u+1] - (eid + 1);
+            tcPayload.v_list_offsets[lid] = v_start - tcIn.list_offset[v];
             candidates = min(n_v, n_u);
         }
     }
@@ -136,9 +138,10 @@ void tc_mesh(
     uint v = At(tcIn.edge_lists, global_eid);
 
     uint64_t u_start = global_eid+1;
-    uint64_t v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
-                                tcIn.list_offset[v+1],
-                                (uint32_t vertex) => (vertex > v));
+    // uint64_t v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
+    //                             tcIn.list_offset[v+1],
+    //                             (uint32_t vertex) => (vertex > v));
+    uint64_t v_start = tcIn.list_offset[v] + inPayload.v_list_offsets[local_eid];
 
     uint n_v = tcIn.list_offset[v+1] - v_start;
     uint n_u = tcIn.list_offset[u+1] - u_start;
