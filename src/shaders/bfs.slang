@@ -2,8 +2,8 @@
 // Author: Himanshu Gupta <himanshu3@iisc.ac.in>
 
 struct SharedBFSPayload {
-    uint vertex_ids[WAVE_SIZE];
     uint edge_offsets[WAVE_SIZE+1];
+    uint frontier_start;
     uint total_edges;
 };
 groupshared SharedBFSPayload sharedBFSPayload;
@@ -34,19 +34,18 @@ void bfs_task(
     uint threadId = gId*WAVE_SIZE + lid;
 
     uint v = 0xFFFFFFFF;
+    uint degree = 0;
     uint current_size = *bfsIn.current_frontier_size;
     if (threadId < current_size) {
         v = bfsIn.current_frontier[threadId];
-    }
-
-    uint degree = 0;
-    if (v != 0xFFFFFFFF) {
         degree = uint(bfsIn.row_offsets[v + 1] - bfsIn.row_offsets[v]);
+        if(WaveIsFirstLane()){
+            sharedBFSPayload.frontier_start = threadId;
+        }
     }
 
     uint wave_offset = WavePrefixSum(degree);
 
-    sharedBFSPayload.vertex_ids[lid] = v;
     sharedBFSPayload.edge_offsets[lid] = wave_offset;
     
     if (lid == WAVE_SIZE - 1) {
@@ -95,7 +94,8 @@ void bfs_mesh(
         }
     }
 
-    uint u = inPayload.vertex_ids[parent_idx];
+    uint frontier_idx = inPayload.frontier_start + parent_idx;
+    uint u = bfsIn.current_frontier[frontier_idx];
     uint64_t u_start = bfsIn.row_offsets[u];
     uint64_t local_edge_offset = edge_idx - inPayload.edge_offsets[parent_idx];
     uint64_t global_edge_idx = u_start + local_edge_offset;
