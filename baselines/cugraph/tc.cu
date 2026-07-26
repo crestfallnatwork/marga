@@ -41,6 +41,19 @@ int main(int argc, char** argv) {
     using vertex_t = int32_t;
     using edge_t = int32_t;
 
+    // Set up RMM pool to avoid fragmentation and allocation overhead
+    // (Must be declared before raft::handle_t to prevent segfaults during destruction)
+    rmm::mr::cuda_memory_resource cuda_mr;
+    
+    size_t free_mem = 0, total_mem = 0;
+    cudaMemGetInfo(&free_mem, &total_mem);
+    
+    free_mem = free_mem*0.95;
+    free_mem = ((free_mem + 255)/256)*256;
+    rmm::mr::pool_memory_resource pool_mr{cuda_mr, free_mem};
+    auto old_mr = rmm::mr::set_current_device_resource(pool_mr);
+
+
     std::string filename = argv[1];
     
     // Import graph and force symmetrization for TC
@@ -52,7 +65,7 @@ int main(int argc, char** argv) {
     for(vertex_t i = 0; i < h_graph.num_vertices; i++) {
         edge_t start = h_graph.row_offsets[i];
         edge_t end = h_graph.row_offsets[i+1];
-        std::sort(&h_graph.column_indices[start], &h_graph.column_indices[end]);
+        std::sort(h_graph.column_indices.data() + start, h_graph.column_indices.data() + end);
     }
 
     raft::handle_t handle;
@@ -78,16 +91,6 @@ int main(int argc, char** argv) {
 
     auto view = cugraph::graph_view_t<vertex_t, edge_t, false, false>(offsets_span, indices_span, meta);
 
-    // Set up RMM pool to avoid fragmentation and allocation overhead
-    rmm::mr::cuda_memory_resource cuda_mr;
-    
-    size_t free_mem = 0, total_mem = 0;
-    cudaMemGetInfo(&free_mem, &total_mem);
-    
-    free_mem = free_mem*0.95;
-    free_mem = ((free_mem + 255)/256)*256;
-    rmm::mr::pool_memory_resource pool_mr{cuda_mr, free_mem};
-    rmm::mr::set_current_device_resource(pool_mr);
 
     rmm::device_uvector<edge_t> tc_counts(h_graph.num_vertices, stream);
     auto tc_counts_span = raft::device_span<edge_t>(tc_counts.data(), tc_counts.size());
@@ -122,6 +125,8 @@ int main(int argc, char** argv) {
     }
     // Each triangle is counted 3 times (once for each vertex)
     std::cout << "Total triangles in graph: " << total_triangles / 3 << "\n";
+
+    rmm::mr::set_current_device_resource(old_mr);
 
     return 0;
 }
