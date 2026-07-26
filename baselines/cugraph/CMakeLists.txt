@@ -11,7 +11,9 @@ find_package(cugraph REQUIRED)
 
 find_package(OpenMP REQUIRED)
 
+set_source_files_properties(csr.cpp PROPERTIES LANGUAGE CUDA)
 add_library(csr csr.cpp)
+target_compile_options(csr PRIVATE "-O3")
 
 add_executable(bfs bfs.cu)
 target_compile_options(bfs PRIVATE "-O3")
