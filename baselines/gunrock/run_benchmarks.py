@@ -71,14 +71,22 @@ def get_vertices_for_bfs(graph_name):
     return ",".join(sources)
 
 def run_command(cmd):
-    """Runs a shell command and returns stdout and a success flag."""
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if result.returncode != 0:
-        print(f"Command failed (likely OOM or crash): {' '.join(cmd)}")
-        print("Last 500 characters of output:")
-        print(result.stdout[-500:])
-        return result.stdout, False
-    return result.stdout, True
+    """Runs a shell command and returns stdout and a status string ('OK', 'OOM', 'TLE')."""
+    try:
+        # 30 minutes = 1800 seconds
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=1800)
+        if result.returncode != 0:
+            print(f"Command failed (likely OOM or crash): {' '.join(cmd)}")
+            print("Last 500 characters of output:")
+            print(result.stdout[-500:])
+            return result.stdout, 'OOM'
+        return result.stdout, 'OK'
+    except subprocess.TimeoutExpired as e:
+        print(f"Command timed out after 30 minutes: {' '.join(cmd)}")
+        out = e.stdout if e.stdout else ""
+        if isinstance(out, bytes):
+            out = out.decode('utf-8', errors='replace')
+        return str(out), 'TLE'
 
 def parse_time(output):
     # Looking for: GPU Elapsed Time : 59.6661 (ms)
@@ -107,22 +115,22 @@ def main():
         # 1. PageRank
         print(f"Running PageRank ({NUM_RUNS} runs)...")
         pr_cmd = [os.path.join(BUILD_DIR, "pr"), "-m", mtx_path, "-n", str(NUM_RUNS)]
-        pr_out, pr_ok = run_command(pr_cmd)
-        results[graph]['PR'] = parse_time(pr_out) if pr_ok else "OOM"
+        pr_out, pr_status = run_command(pr_cmd)
+        results[graph]['PR'] = parse_time(pr_out) if pr_status == 'OK' else pr_status
         
         # 2. Triangle Counting
         print(f"Running TC ({NUM_RUNS} runs)...")
         tc_cmd = [os.path.join(BUILD_DIR, "tc"), "-m", mtx_path, "-n", str(NUM_RUNS)]
-        tc_out, tc_ok = run_command(tc_cmd)
-        results[graph]['TC'] = parse_time(tc_out) if tc_ok else "OOM"
+        tc_out, tc_status = run_command(tc_cmd)
+        results[graph]['TC'] = parse_time(tc_out) if tc_status == 'OK' else tc_status
         
         # 3. BFS
         if sources_str:
             num_sources = len(sources_str.split(','))
             print(f"Running BFS ({num_sources} sources)...")
             bfs_cmd = [os.path.join(BUILD_DIR, "bfs"), "-m", mtx_path, "-s", sources_str]
-            bfs_out, bfs_ok = run_command(bfs_cmd)
-            results[graph]['BFS'] = parse_time(bfs_out) if bfs_ok else "OOM"
+            bfs_out, bfs_status = run_command(bfs_cmd)
+            results[graph]['BFS'] = parse_time(bfs_out) if bfs_status == 'OK' else bfs_status
         else:
             results[graph]['BFS'] = "N/A"
         
