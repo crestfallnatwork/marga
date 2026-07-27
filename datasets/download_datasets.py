@@ -34,25 +34,26 @@ import sys
 import subprocess
 import shutil
 import glob
+import hashlib
 
 def compute_sha256(filepath):
-    """Compute the SHA-256 hash of a file using the sha256sum binary utility."""
-    try:
-        result = subprocess.run(["sha256sum", filepath], stdout=subprocess.PIPE, check=True, text=True)
-        # The output format is "hash  filename", so we split and take the first element
-        return result.stdout.split()[0]
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to compute hash for {filepath}: {e}")
-        return None
+    """Compute the SHA-256 hash of a file."""
+    digest = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 def get_downloader():
-    """Returns 'aria2c' if available, otherwise 'wget'."""
+    """Return the first available supported downloader."""
     if shutil.which("aria2c"):
         return "aria2c"
     elif shutil.which("wget"):
         return "wget"
+    elif shutil.which("curl"):
+        return "curl"
     else:
-        print("Error: Neither aria2c nor wget is installed.")
+        print("Error: None of aria2c, wget, or curl is installed.")
         sys.exit(1)
 
 def run_extraction(filename, extract_dir):
@@ -122,7 +123,7 @@ def process_dataset(dataset_dir):
         print(f"[{dir_name}] Found existing graph file: {os.path.basename(graph_file)}.")
         
         if expected_hash:
-            print(f"[{dir_name}] Verifying hash using sha256sum...")
+            print(f"[{dir_name}] Verifying SHA-256 hash...")
             actual_hash = compute_sha256(graph_file)
             if actual_hash == expected_hash:
                 print(f"[{dir_name}] Hash matches. Dataset is ready.")
@@ -131,7 +132,7 @@ def process_dataset(dataset_dir):
                 print(f"[{dir_name}] Hash mismatch! Deleting corrupt files...")
                 os.remove(graph_file)
         else:
-            print(f"[{dir_name}] No hash.txt found. Generating hash using sha256sum...")
+            print(f"[{dir_name}] No hash.txt found. Generating SHA-256 hash...")
             actual_hash = compute_sha256(graph_file)
             if actual_hash:
                 with open(hash_file, "w") as f:
@@ -205,6 +206,9 @@ def process_dataset(dataset_dir):
                 subprocess.run(["aria2c", "-c", "-x", "10", "-s", "10", url, "-o", filename], check=True)
             elif downloader == "wget":
                 subprocess.run(["wget", "-c", "-q", "--show-progress", url, "-O", filename], check=True)
+            elif downloader == "curl":
+                subprocess.run(["curl", "--fail", "--location", "--continue-at", "-",
+                                "--output", filename, url], check=True)
         except subprocess.CalledProcessError:
             print(f"[{dir_name}] Downloader process exited with error.")
             
@@ -238,7 +242,7 @@ def process_dataset(dataset_dir):
             print(f"[{dir_name}] Error: No .mtx or .edges file found after extraction.")
             continue
             
-        print(f"[{dir_name}] Computing hash of extracted file using sha256sum...")
+        print(f"[{dir_name}] Computing SHA-256 hash of extracted file...")
         actual_hash = compute_sha256(graph_file)
         if not actual_hash:
             continue

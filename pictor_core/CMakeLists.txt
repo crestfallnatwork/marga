@@ -19,11 +19,19 @@ FetchContent_Declare(
     GIT_TAG        1.4.350
 )
 
-FetchContent_Declare(
-  slang
-  URL https://github.com/shader-slang/slang/releases/download/v2026.10.2/slang-2026.10.2-linux-x86_64-glibc-2.27.tar.gz
-  URL_HASH SHA256=035aaeaaadd6024d64da28d665685f793d0928831bf32cb2c37cb3e58c5ac707
-)
+if(WIN32)
+    FetchContent_Declare(
+        slang
+        URL https://github.com/shader-slang/slang/releases/download/v2026.10.2/slang-2026.10.2-windows-x86_64.zip
+        URL_HASH SHA256=f21fca4ba78bfb366ef3b282b4926e3efca61c2ffd72a482b024c9f8413331d0
+    )
+else()
+    FetchContent_Declare(
+        slang
+        URL https://github.com/shader-slang/slang/releases/download/v2026.10.2/slang-2026.10.2-linux-x86_64-glibc-2.27.tar.gz
+        URL_HASH SHA256=035aaeaaadd6024d64da28d665685f793d0928831bf32cb2c37cb3e58c5ac707
+    )
+endif()
 
 FetchContent_MakeAvailable(vmahpp volk slang)
 list(APPEND CMAKE_PREFIX_PATH "${slang_SOURCE_DIR}")
