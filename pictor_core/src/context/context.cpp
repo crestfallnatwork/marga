@@ -155,7 +155,7 @@ size_t Context::get_device_free_memory()
     auto budgets   = vma_allocator.getHeapBudgets();
     size_t usage   = 0;
     size_t budget  = 0;
-    for (uint i = 0; i < budgets.size(); i++) {
+    for (size_t i = 0; i < budgets.size(); i++) {
         if (!(mem_props->memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
             continue;
         }
@@ -171,7 +171,7 @@ size_t Context::get_host_free_memory()
     auto budgets   = vma_allocator.getHeapBudgets();
     size_t usage   = 0;
     size_t budget  = 0;
-    for (uint i = 0; i < budgets.size(); i++) {
+    for (size_t i = 0; i < budgets.size(); i++) {
         if ((mem_props->memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
             continue;
         }
@@ -180,8 +180,8 @@ size_t Context::get_host_free_memory()
     }
     /* UMA fallback */
     if (budget == 0) {
-        uint uma_heap = std::numeric_limits<uint>::max();
-        for (uint i = 0; i < mem_props->memoryTypeCount; i++) {
+        uint32_t uma_heap = std::numeric_limits<uint32_t>::max();
+        for (uint32_t i = 0; i < mem_props->memoryTypeCount; i++) {
             if (!(mem_props->memoryTypes[i].propertyFlags &
                   vk::MemoryPropertyFlagBits::eHostVisible)) {
                 continue;
@@ -292,7 +292,7 @@ vk::Result Context::_select_physical_device()
         auto extensionsRes   = dev.enumerateDeviceExtensionProperties();
         if (extensionsRes.result == vk::Result::eSuccess) {
             for (const auto& ext : extensionsRes.value) {
-                if (std::string(ext.extensionName) == VK_EXT_MESH_SHADER_EXTENSION_NAME) {
+                if (std::string(ext.extensionName.data()) == VK_EXT_MESH_SHADER_EXTENSION_NAME) {
                     has_mesh_shader = true;
                     break;
                 }

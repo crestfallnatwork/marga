@@ -92,7 +92,7 @@ uint32_t PageRank::run(Graph& G, float delta)
     auto curr  = &current_pr;
     auto past  = &past_pr;
 
-    uint batchSize = 25;
+    uint32_t batchSize = 25;
 
     volatile float* h_delta = reinterpret_cast<float*>(_h_pr_results.mappedPtr);
 

@@ -4,7 +4,7 @@
 #include "pictor_core/context/context.hpp"
 #include <chrono>
 
-static const uint cMaxMeshDim = 65535;
+static const uint32_t cMaxMeshDim = 65535;
 
 namespace pictor {
 namespace graphs {

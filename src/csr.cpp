@@ -35,14 +35,22 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
-#include <iostream>
-#include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <thread>
-#include <chrono>
 #include <unistd.h>
+#endif
+#include <iostream>
+#include <limits>
+#include <string_view>
+#include <thread>
 #include <vector>
 
 namespace pictor {
@@ -51,11 +59,36 @@ namespace graphs {
 namespace {
 
 struct MappedFile {
-    void* data;
-    size_t size;
+    void* data = nullptr;
+    size_t size = 0;
 
     MappedFile(const std::string& filename)
     {
+#ifdef _WIN32
+        HANDLE file = CreateFileA(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+            throw std::runtime_error("Could not open file: " + filename);
+
+        LARGE_INTEGER file_size{};
+        if (!GetFileSizeEx(file, &file_size) || file_size.QuadPart <= 0 ||
+            static_cast<unsigned long long>(file_size.QuadPart) >
+                std::numeric_limits<size_t>::max()) {
+            CloseHandle(file);
+            throw std::runtime_error("Could not stat file: " + filename);
+        }
+        size = static_cast<size_t>(file_size.QuadPart);
+
+        HANDLE mapping = CreateFileMappingA(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        CloseHandle(file);
+        if (!mapping)
+            throw std::runtime_error("Could not create file mapping: " + filename);
+
+        data = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+        CloseHandle(mapping);
+        if (!data)
+            throw std::runtime_error("Could not map file: " + filename);
+#else
         int fd = open(filename.c_str(), O_RDONLY);
         if (fd == -1)
             throw std::runtime_error("Could not open file: " + filename);
@@ -72,12 +105,18 @@ struct MappedFile {
 
         if (data == MAP_FAILED)
             throw std::runtime_error("Could not mmap file: " + filename);
+#endif
     }
 
     ~MappedFile()
     {
+#ifdef _WIN32
+        if (data)
+            UnmapViewOfFile(data);
+#else
         if (data != MAP_FAILED)
             munmap(data, size);
+#endif
     }
 };
 
