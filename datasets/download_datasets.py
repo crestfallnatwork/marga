@@ -61,9 +61,11 @@ def run_extraction(filename, extract_dir):
     os.makedirs(extract_dir, exist_ok=True)
     try:
         if filename.endswith(".tar.gz"):
-            subprocess.run(["tar", "-xzf", filename, "-C", extract_dir], check=True, stderr=subprocess.PIPE)
+            # -m: do not restore mtimes (NTFS via ntfs-3g rejects utime)
+            subprocess.run(["tar", "-xzmf", filename, "-C", extract_dir], check=True, stderr=subprocess.PIPE)
         elif filename.endswith(".zip"):
-            subprocess.run(["unzip", "-q", "-o", filename, "-d", extract_dir], check=True, stderr=subprocess.PIPE)
+            # -DD: do not restore timestamps (same NTFS reason)
+            subprocess.run(["unzip", "-q", "-o", "-DD", filename, "-d", extract_dir], check=True, stderr=subprocess.PIPE)
         else:
             print(f"Unknown archive format: {filename}")
             return False

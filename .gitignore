@@ -39,3 +39,6 @@ results/
 # clangd cache
 .cache
 temp
+
+# Local scratch space for scripts, logs, throwaway outputs
+scratch/
