@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "host_graph.hpp"
 #include "pictor_core/memory/allocation_type.hpp"
 
 #include <cstdint>
@@ -14,11 +15,6 @@ struct Context;
 
 namespace graphs {
 
-enum class GraphLayout {
-    CSR, // Compressed Sparse Row (Sorted by Source, holds Destinations)
-    CSC  // Compressed Sparse Column (Sorted by Destination, holds Sources)
-};
-
 struct Graph {
     ~Graph();
     Graph(Context* ctx);
@@ -29,17 +25,21 @@ struct Graph {
     uint64_t num_vertices = 0;
     uint64_t num_edges    = 0;
     GraphLayout layout    = GraphLayout::CSR;
+    bool symmetrized      = false;
 
     std::span<uint64_t> row_offsets;
     std::span<uint32_t> column_indices;
 
-    void save_to_binary(const std::string& prefix) const;
-    void load_from_binary(const std::string& prefix);
+    void save_to_binary(const std::string& path) const;
+    void load_from_binary(const std::string& path);
 
     static Graph import(Context& ctx, std::string const& file, bool symmetrize = false,
                         GraphLayout target_layout = GraphLayout::CSR);
 
   private:
+    // Copy host CSR/CSC into pinned buffers and upload to the device.
+    void upload_host_graph(const HostGraph& graph);
+
     AllocationInfo h_row_offsets;
     AllocationInfo h_column_indices;
     Context* ctx;
