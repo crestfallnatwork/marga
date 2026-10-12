@@ -35,6 +35,9 @@ struct TcAblationResult {
     double   load_s    = 0.0;
     // One-time orientation preprocessing cost (0 when --preorient is off).
     double   prepass_ms = 0.0;
+    // End-to-end pre-oriented arm cost: avg_ms + prepass_ms (equals avg_ms
+    // when --preorient is off).
+    double   e2e_ms = 0.0;
     uint64_t oriented_edges = 0;
 };
 

@@ -228,6 +228,7 @@ TcAblationResult run_tc_ablation(const HostGraph& g, const TcAblationConfig& cfg
         out.max_ms = std::max(out.max_ms, (double)ms);
     }
     out.avg_ms = sum / (cfg.reps > 0 ? cfg.reps : 1);
+    out.e2e_ms = out.avg_ms + out.prepass_ms;
 
     if (cfg.preorient) {
         // The oriented lists only contain >-vertex neighbors, so full-list and

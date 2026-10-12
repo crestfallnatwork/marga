@@ -26,7 +26,8 @@ static void print_usage(const char* argv0)
         "  --preorient              orient the dataset in a two-pass device preprocessing step\n"
         "                           (per-vertex count + prefix sum, then write the u<v edge\n"
         "                           list) and run the arm on the oriented list; no load\n"
-        "                           balancing. The pre-pass is timed separately (prepass_ms).\n"
+        "                           balancing. The pre-pass is timed separately (prepass_ms);\n"
+        "                           the reported e2e_ms = TC average + pre-pass.\n"
         "  --batch N                edges per launch (default 16777216 = 2^24, MARGA's TC\n"
         "                           batch size, host round-trip per batch); 0 = whole graph\n"
         "  --reps N                 timed repetitions (default 3)\n"
@@ -103,12 +104,12 @@ int main(int argc, char** argv)
         std::printf(
             "RESULT graph=%s cull=%s batch=%" PRIu64
             " reps=%d avg_ms=%.3f min_ms=%.3f max_ms=%.3f triangles=%" PRIu64
-            " preorient=%d prepass_ms=%.3f oriented_edges=%" PRIu64
+            " preorient=%d prepass_ms=%.3f e2e_ms=%.3f oriented_edges=%" PRIu64
             " validated=%d valid=%d cpu_triangles=%" PRIu64 "\n",
             graph_path.c_str(), cfg.cull.c_str(),
             cfg.batch, cfg.reps, s.avg_ms, s.min_ms, s.max_ms, s.triangles,
-            cfg.preorient ? 1 : 0, s.prepass_ms, s.oriented_edges, s.validated ? 1 : 0,
-            s.valid ? 1 : 0, s.cpu_triangles);
+            cfg.preorient ? 1 : 0, s.prepass_ms, s.e2e_ms, s.oriented_edges,
+            s.validated ? 1 : 0, s.valid ? 1 : 0, s.cpu_triangles);
         if (s.validated && !s.valid)
             std::printf("VALIDATION FAILED: gpu=%" PRIu64 " cpu=%" PRIu64 "\n", s.triangles,
                         s.cpu_triangles);
@@ -119,14 +120,15 @@ int main(int argc, char** argv)
             std::ofstream f(csv_path, std::ios::app);
             if (write_header)
                 f << "graph,V,E,cull,batch,reps,warmup,avg_ms,min_ms,"
-                     "max_ms,triangles,preorient,prepass_ms,oriented_edges,validated,valid,"
-                     "cpu_triangles\n";
+                     "max_ms,triangles,preorient,prepass_ms,e2e_ms,oriented_edges,validated,"
+                     "valid,cpu_triangles\n";
             f << graph_path << ',' << g.num_vertices << ',' << g.num_edges
               << ',' << cfg.cull << ',' << cfg.batch
               << ',' << cfg.reps << ',' << cfg.warmup << ',' << s.avg_ms << ',' << s.min_ms << ','
               << s.max_ms << ',' << s.triangles << ',' << (cfg.preorient ? 1 : 0) << ','
-              << s.prepass_ms << ',' << s.oriented_edges << ',' << (s.validated ? 1 : 0) << ','
-              << (s.valid ? 1 : 0) << ',' << s.cpu_triangles << '\n';
+              << s.prepass_ms << ',' << s.e2e_ms << ',' << s.oriented_edges << ','
+              << (s.validated ? 1 : 0) << ',' << (s.valid ? 1 : 0) << ',' << s.cpu_triangles
+              << '\n';
         }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

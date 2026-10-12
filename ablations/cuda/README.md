@@ -17,8 +17,9 @@ level:
 
 `--preorient` builds the oriented (u<v) edge list in a two-pass device pre-pass
 (per-vertex count + CUB prefix sum, then write) and runs the arm on it. The
-pre-pass is timed separately (`prepass_ms`) and preserves edge order (no load
-balancing).
+pre-pass is timed separately (`prepass_ms`), preserves edge order (no load
+balancing), and is part of the arm's reported cost: `e2e_ms` = TC average +
+pre-pass.
 
 ## Benchmark protocol
 
