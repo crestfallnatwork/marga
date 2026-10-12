@@ -14,6 +14,7 @@
 
 #include <vk_mem_alloc.hpp>
 
+#include <limits>
 #include <memory>
 
 namespace pictor {

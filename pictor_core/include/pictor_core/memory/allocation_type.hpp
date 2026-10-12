@@ -33,6 +33,11 @@ struct AllocationInfo {
 
     Allocator* alloc = nullptr;
 
+    // Explicit default constructor: the anonymous union has a variant member
+    // (vma::VirtualAllocation) with a non-trivial default constructor, which
+    // would otherwise implicitly delete this constructor on GCC.
+    AllocationInfo() : allocation{VK_NULL_HANDLE} {}
+
     template <typename T>
     operator T*() const{
         return reinterpret_cast<T*>(address);
