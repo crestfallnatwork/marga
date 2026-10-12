@@ -52,6 +52,23 @@ VMA-Hpp, Slang), so it needs network access.
 
 - Isolate experiments on branches; `main` is the integration branch.
 - Commit small and often.
-- The CUDA ablation harness on `main` is restricted to the published TC arms
-  (static, task/mesh, orientation pre-pass) — keep new experiment arms on
+- The CUDA ablation harness on `main` is restricted to the published TC arm
+  (static one-thread-per-edge scheduling with `none`/`orient`/`bounded` cull
+  levels, plus the orientation pre-pass) — keep new experiment arms on
   separate branches and merge back deliberately.
+
+## Agent commits
+
+Commits authored by an AI agent — any harness, any model — must be
+attributable:
+
+- Set the identity **repo-locally** (`git config user.name` /
+  `git config user.email`), never globally. Name: the harness slug
+  (e.g. `opencode`, `claude-code`). Email: `<harness>+<user_email>` (e.g.
+  `opencode+alice@example.com`), or a specified email.
+- End every commit message with an attribution trailer:
+  `Co-Authored-By: <model@harness>` — e.g.
+  `Co-Authored-By: deepseek-v4.1-flash@opencode`. If the model is unknown,
+  the harness alone suffices: `Co-Authored-By: <harness>`.
+- Keep the attribution in the commit metadata and message only; do not add
+  personal details elsewhere in the repository.
