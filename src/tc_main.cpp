@@ -6,6 +6,7 @@
 #include "pictor_core/context/context.hpp"
 #include "pictor_core/memory/heap_allocator.hpp"
 #include "tc.hpp"
+#include "tc_validation.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -72,50 +73,18 @@ int main(int argc, char* argv[])
         std::cout << "======================================\n\n";
         if (validate) {
             std::cout << "Running CPU Validation..." << std::endl;
-            uint64_t cpu_tc = 0;
             auto val_start = std::chrono::high_resolution_clock::now();
 
-            for (uint32_t u = 0; u < g.num_vertices; u++) {
-                uint64_t start_u = g.row_offsets[u];
-                uint64_t end_u = g.row_offsets[u + 1];
+            const uint64_t cpu_tc =
+                pictor::graphs::TCValidator::run(g.row_offsets, g.column_indices);
 
-                for (uint64_t idx_u = start_u; idx_u < end_u; idx_u++) {
-                    uint32_t v = g.column_indices[idx_u];
-                    if (v > u) { // Only consider edges where u < v
-                        uint64_t start_v = g.row_offsets[v];
-                        uint64_t end_v = g.row_offsets[v + 1];
-
-                        uint64_t i = start_u;
-                        uint64_t j = start_v;
-
-                        // Find intersection of N(u) and N(v)
-                        while (i < end_u && j < end_v) {
-                            uint32_t w_u = g.column_indices[i];
-                            uint32_t w_v = g.column_indices[j];
-                            
-                            if (w_u == w_v) {
-                                if (w_u > v) { // Enforce u < v < w to count each triangle exactly once
-                                    cpu_tc++;
-                                }
-                                i++;
-                                j++;
-                            } else if (w_u < w_v) {
-                                i++;
-                            } else {
-                                j++;
-                            }
-                        }
-                    }
-                }
-            }
-            
             auto val_end = std::chrono::high_resolution_clock::now();
             double val_time = std::chrono::duration<double, std::milli>(val_end - val_start).count();
-            
+
             std::cout << "CPU TC Validation: " << cpu_tc << " triangles\n";
             std::cout << "CPU Validation Time: " << val_time << " ms\n";
-            
-            if (cpu_tc == res) {
+
+            if (pictor::graphs::TCValidator::verify(res, cpu_tc)) {
                 std::cout << "SUCCESS: GPU result matches CPU baseline.\n";
             } else if (cpu_tc > 0 && res % cpu_tc == 0) {
                 std::cout << "SUCCESS (Scaled): GPU result (" << res << ") is exactly " << (res / cpu_tc) << "x the CPU baseline.\n";

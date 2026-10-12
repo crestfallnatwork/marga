@@ -17,7 +17,7 @@ add_subdirectory(pictor_core)
 include_directories(include)
 include_directories(external)
 
-add_library(pictor_graphs src/csr.cpp)
+add_library(pictor_graphs src/csr.cpp src/host_graph.cpp)
 
 target_link_libraries(pictor_graphs pictor_core OpenMP::OpenMP_CXX)
 
@@ -30,7 +30,7 @@ add_library(pictor_graphs_pr src/pagerank.cpp)
 target_link_libraries(pictor_graphs_pr pr_shader)
 
 pictor_add_shader(tc_shader src/shaders/tc.slang)
-add_library(pictor_graphs_tc src/tc.cpp)
+add_library(pictor_graphs_tc src/tc.cpp src/tc_validation.cpp)
 target_link_libraries(pictor_graphs_tc tc_shader)
 
 add_executable(bfs src/bfs_main.cpp)
