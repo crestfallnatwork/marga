@@ -3,6 +3,7 @@
 
 struct SharedBFSPayload {
     uint edge_offsets[WAVE_SIZE+1];
+    uint edge_starts[WAVE_SIZE];
     uint frontier_start;
     uint total_edges;
 };
@@ -35,14 +36,18 @@ void bfs_task(
 
     uint v = 0xFFFFFFFF;
     uint degree = 0;
+    uint start = 0;
     uint current_size = *bfsIn.current_frontier_size;
     if (threadId < current_size) {
         v = bfsIn.current_frontier[threadId];
-        degree = uint(bfsIn.row_offsets[v + 1] - bfsIn.row_offsets[v]);
+        uint64_t s = bfsIn.row_offsets[v];
+        start = uint(s);
+        degree = uint(bfsIn.row_offsets[v + 1] - s);
         if(WaveIsFirstLane()){
             sharedBFSPayload.frontier_start = threadId;
         }
     }
+    sharedBFSPayload.edge_starts[lid] = start;
 
     uint wave_offset = WavePrefixSum(degree);
 
@@ -94,11 +99,8 @@ void bfs_mesh(
         }
     }
 
-    uint frontier_idx = inPayload.frontier_start + parent_idx;
-    uint u = bfsIn.current_frontier[frontier_idx];
-    uint64_t u_start = bfsIn.row_offsets[u];
     uint64_t local_edge_offset = edge_idx - inPayload.edge_offsets[parent_idx];
-    uint64_t global_edge_idx = u_start + local_edge_offset;
+    uint64_t global_edge_idx = uint64_t(inPayload.edge_starts[parent_idx]) + local_edge_offset;
 
     uint64_t byte_addr = uint64_t(bfsIn.column_indices) + (global_edge_idx * 4ull);
     neighbor = *(uint32_t*)byte_addr;
