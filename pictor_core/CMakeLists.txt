@@ -7,6 +7,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Vulkan REQUIRED)
 
 include(FetchContent)
+
+# VMA-Hpp 3.3.0 needs a recent Vulkan-Hpp (e.g. vk::exchange, which distro
+# packages such as Ubuntu 22.04's 1.3.283 lack). Pin the headers instead of
+# relying on whatever the system provides. Populate only (no add_subdirectory)
+# to avoid colliding with the Vulkan::Headers target from FindVulkan.
+FetchContent_Declare(
+    vulkan_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG        v1.4.350
+)
+FetchContent_GetProperties(vulkan_headers)
+if(NOT vulkan_headers_POPULATED)
+    FetchContent_Populate(vulkan_headers)
+endif()
+
 FetchContent_Declare(
     vmahpp
     URL https://github.com/YaaZ/VulkanMemoryAllocator-Hpp/releases/download/v3.3.0%2B3/VulkanMemoryAllocator-Hpp-3.3.0.tar.gz
@@ -36,6 +51,12 @@ endif()
 FetchContent_MakeAvailable(vmahpp volk slang)
 list(APPEND CMAKE_PREFIX_PATH "${slang_SOURCE_DIR}")
 
+# volk must compile against the pinned Vulkan-Headers: toolchains with their
+# own sysroot (e.g. conda GCC) do not search /usr/include implicitly, so the
+# distro headers found by FindVulkan may not be reachable from volk.
+target_include_directories(volk BEFORE PUBLIC
+    $<BUILD_INTERFACE:${vulkan_headers_SOURCE_DIR}/include>)
+
 find_package(slang REQUIRED CONFIG)
 
 add_library(pictor_core
@@ -45,6 +66,11 @@ add_library(pictor_core
     src/memory/pool_allocator.cpp
     src/memory/pinned_memory_allocator.cpp
     src/memory/heap_allocator.cpp
+)
+
+target_include_directories(pictor_core
+    BEFORE PUBLIC
+        $<BUILD_INTERFACE:${vulkan_headers_SOURCE_DIR}/include>
 )
 
 target_include_directories(pictor_core
