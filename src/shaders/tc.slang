@@ -37,6 +37,14 @@ struct TCIn {
     uint64_t num_vertices;
     uint64_t edge_start;
     uint64_t edge_num;
+    // Attribution gates (default 0; see the driver's MARGA_TC_* env vars).
+    uint32_t mesh_noop;
+    uint32_t no_payload;
+    // When nonzero: skip the candidate computation and dispatch this many mesh
+    // groups per task group (combine with MARGA_TC_MESH_NOOP).
+    uint32_t task_noop;
+    uint32_t count_mesh;
+    uint64_t* mesh_count;
 };
 // @bind(tc_task)
 [[vk::push_constant]]
@@ -47,6 +55,16 @@ void tc_task(
     uint3 gid : SV_GroupID,
     uint lid : SV_GroupIndex,
 ) {
+    if(tcIn.task_noop) {
+        // Attribution: skip the candidate computation; dispatch task_noop
+        // mesh groups per task group (combine with MARGA_TC_MESH_NOOP).
+        tcPayload.offsets[lid] = 0;
+        if(lid == WAVE_SIZE - 1) {
+            tcPayload.offsets[WAVE_SIZE] = 0;
+        }
+        DispatchMesh(tcIn.task_noop, 1, 1, tcPayload);
+        return;
+    }
     uint gid = (gid.y*cMaxMeshDim) + gid.x;
     uint64_t eid = gid*WAVE_SIZE + lid + tcIn.edge_start;
 
@@ -95,6 +113,9 @@ void tc_task(
     GroupMemoryBarrierWithGroupSync();
 
     uint mesh_count = (tcPayload.offsets[WAVE_SIZE] + 127) / 128;
+    if(tcIn.count_mesh && WaveIsFirstLane()) {
+        InterlockedAdd(*tcIn.mesh_count, uint64_t(mesh_count));
+    }
     uint mesh_x = mesh_count > cMaxMeshDim ? cMaxMeshDim : mesh_count;
     uint mesh_y = mesh_count > cMaxMeshDim ?
                   ((mesh_count + cMaxMeshDim - 1) / cMaxMeshDim): 1;
@@ -112,6 +133,10 @@ void tc_mesh(
     out vertices float4 vertices[1],
     out indices uint indices[1]
 ) {
+    if(tcIn.mesh_noop) {
+        SetMeshOutputCounts(0, 0);
+        return;
+    }
     uint gid = (gid.y*cMaxMeshDim) + gid.x;
     uint threadId = gid*128 + lid;
     if(threadId >= inPayload.offsets[WAVE_SIZE]) {
@@ -138,10 +163,13 @@ void tc_mesh(
     uint v = At(tcIn.edge_lists, global_eid);
 
     uint64_t u_start = global_eid+1;
-    // uint64_t v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
-    //                             tcIn.list_offset[v+1],
-    //                             (uint32_t vertex) => (vertex > v));
-    uint64_t v_start = tcIn.list_offset[v] + inPayload.v_list_offsets[local_eid];
+    uint64_t v_start;
+    if(tcIn.no_payload) {
+        v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v], tcIn.list_offset[v+1],
+                             (uint32_t vertex) => (vertex > v));
+    } else {
+        v_start = tcIn.list_offset[v] + inPayload.v_list_offsets[local_eid];
+    }
 
     uint n_v = tcIn.list_offset[v+1] - v_start;
     uint n_u = tcIn.list_offset[u+1] - u_start;
