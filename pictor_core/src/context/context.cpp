@@ -48,7 +48,8 @@ Context::~Context()
 StreamHandle Context::create_stream()
 {
     auto handle = static_cast<StreamHandle>(_streams.size());
-    _streams.emplace_back(std::make_unique<Stream>(device, queue_family_index));
+    _streams.emplace_back(std::make_unique<Stream>(
+        device, queue_family_index, physical_device.getProperties().limits.timestampPeriod));
     return handle;
 }
 
@@ -133,6 +134,28 @@ void Context::update(const AllocationInfo& dst, size_t offset, size_t size, cons
     if (s) {
         s->_update(dst, offset, size, data);
     }
+}
+
+void Context::reset_timestamps(uint32_t first, uint32_t count, StreamHandle handle)
+{
+    Stream* s = get_stream(handle);
+    if (s)
+        s->reset_timestamps(first, count);
+}
+
+void Context::timestamp(uint32_t slot, StreamHandle handle)
+{
+    Stream* s = get_stream(handle);
+    if (s)
+        s->write_timestamp(slot);
+}
+
+std::vector<uint64_t> Context::read_timestamps(uint32_t first, uint32_t count, StreamHandle handle)
+{
+    Stream* s = get_stream(handle);
+    if (!s)
+        return std::vector<uint64_t>(count, 0);
+    return s->read_timestamps(first, count);
 }
 
 void Context::deallocate(AllocationInfo& info)

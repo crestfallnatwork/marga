@@ -16,6 +16,7 @@
 
 #include <limits>
 #include <memory>
+#include <vector>
 
 namespace pictor {
 
@@ -52,6 +53,12 @@ class Context {
               StreamHandle stream = cDefaultStream);
     void update(const AllocationInfo& dst, size_t offset, size_t size, const void* data,
                 StreamHandle stream = cDefaultStream);
+
+    // GPU timestamp instrumentation (optional; used for ablation attribution).
+    void reset_timestamps(uint32_t first, uint32_t count, StreamHandle handle = cDefaultStream);
+    void timestamp(uint32_t slot, StreamHandle handle = cDefaultStream);
+    std::vector<uint64_t> read_timestamps(uint32_t first, uint32_t count,
+                                          StreamHandle handle = cDefaultStream);
 
     void invalidate(AllocationInfo& alloc);
     void flush(AllocationInfo& alloc);

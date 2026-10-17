@@ -7,7 +7,10 @@
 
 namespace pictor {
 
-Stream::Stream(vk::Device dev, uint32_t queue_family_index) : device(dev)
+constexpr uint32_t cTimestampSlots = 4096;
+
+Stream::Stream(vk::Device dev, uint32_t queue_family_index, float timestamp_period)
+    : device(dev), _timestamp_period(timestamp_period)
 {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.queueFamilyIndex = queue_family_index;
@@ -32,6 +35,15 @@ Stream::Stream(vk::Device dev, uint32_t queue_family_index) : device(dev)
         fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
         _fences[0]      = device.createFence(fenceInfo).value;
         _fences[1]      = device.createFence(fenceInfo).value;
+
+        // Optional GPU timestamp pool (see write_timestamp); failures are
+        // tolerated so instrumentation never breaks the default path.
+        vk::QueryPoolCreateInfo timestampInfo{};
+        timestampInfo.queryType  = vk::QueryType::eTimestamp;
+        timestampInfo.queryCount = cTimestampSlots;
+        auto tsRes               = device.createQueryPool(timestampInfo);
+        if (tsRes.result == vk::Result::eSuccess)
+            _timestamp_pool = tsRes.value;
     }
 }
 
@@ -39,6 +51,8 @@ Stream::~Stream()
 {
     if (device) {
         synchronize();
+        if (_timestamp_pool)
+            device.destroyQueryPool(_timestamp_pool);
         for (auto f : _fences)
             device.destroyFence(f);
         if (command_pool)
@@ -215,6 +229,47 @@ void Stream::_update(const AllocationInfo& dst, size_t offset, size_t size, cons
             return;
     }
     _command_buffers[_current_frame].updateBuffer(dst.buffer, dst.offset + offset, size, data);
+}
+
+void Stream::reset_timestamps(uint32_t first, uint32_t count)
+{
+    if (!_timestamp_pool)
+        return;
+    if (!_recording) {
+        if (begin() != vk::Result::eSuccess)
+            return;
+    }
+    _command_buffers[_current_frame].resetQueryPool(_timestamp_pool, first, count);
+}
+
+void Stream::write_timestamp(uint32_t slot)
+{
+    if (!_timestamp_pool)
+        return;
+    if (!_recording) {
+        if (begin() != vk::Result::eSuccess)
+            return;
+    }
+    _command_buffers[_current_frame].writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands,
+                                                     _timestamp_pool, slot);
+}
+
+std::vector<uint64_t> Stream::read_timestamps(uint32_t first, uint32_t count)
+{
+    std::vector<uint64_t> out(count, 0);
+    if (!_timestamp_pool)
+        return out;
+    auto res = device.getQueryPoolResults(_timestamp_pool, first, count, count * sizeof(uint64_t),
+                                          out.data(), sizeof(uint64_t),
+                                          vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+    if (res != vk::Result::eSuccess) {
+        std::fill(out.begin(), out.end(), 0);
+        return out;
+    }
+    // Convert ticks to nanoseconds.
+    for (auto& t : out)
+        t = static_cast<uint64_t>(static_cast<double>(t) * _timestamp_period);
+    return out;
 }
 
 } // namespace pictor

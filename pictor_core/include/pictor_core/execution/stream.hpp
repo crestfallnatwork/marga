@@ -9,6 +9,7 @@
 #include <vulkan/vulkan.hpp>
 
 #include <array>
+#include <vector>
 
 namespace pictor {
 
@@ -21,7 +22,7 @@ using RecordCallback = void (*)(vk::CommandBuffer cmd, void* user_data);
 
 class Stream {
   public:
-    Stream(vk::Device device, uint32_t queue_family_index);
+    Stream(vk::Device device, uint32_t queue_family_index, float timestamp_period = 1.0f);
     ~Stream();
 
     Stream(const Stream&)            = delete;
@@ -38,6 +39,14 @@ class Stream {
     void barrier(const std::vector<ResourceBarrier>& barriers);
 
     void record(RecordCallback cb, void* user_data);
+
+    // GPU timestamp instrumentation (optional; used for ablation attribution).
+    // write_timestamp records a device timestamp into `slot` at the current
+    // command-buffer position; read_timestamps blocks until the results are
+    // available (call only after synchronize/fsync) and returns nanoseconds.
+    void reset_timestamps(uint32_t first, uint32_t count);
+    void write_timestamp(uint32_t slot);
+    std::vector<uint64_t> read_timestamps(uint32_t first, uint32_t count);
 
     vk::Device device;
     vk::CommandPool command_pool;
@@ -56,6 +65,8 @@ class Stream {
 
     std::array<vk::CommandBuffer, 2> _command_buffers;
     std::array<vk::Fence, 2> _fences;
+    vk::QueryPool _timestamp_pool;
+    float _timestamp_period{1.0f}; // ns per timestamp tick
     uint32_t _current_frame{0};
     bool _recording{false};
 };
