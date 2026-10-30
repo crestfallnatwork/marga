@@ -23,7 +23,7 @@
 // is cRecordWords words per entry.
 
 static const uint cMaxMeshDim   = 65535;
-static const uint cItemsPerLane = 16;
+static const uint cItemsPerLane = 4;
 static const uint cGroupItems   = WAVE_SIZE * cItemsPerLane;
 static const uint cRecordWords  = 4;
 static const uint cMeshGroup    = 128;
