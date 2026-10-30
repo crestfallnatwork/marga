@@ -65,7 +65,7 @@ int main(int argc, char* argv[])
         std::cout << "Note: the file is symmetric, so this run already sees both directions; "
                      "use -s to cull one direction.\n";
 
-    pictor::graphs::CC cc(ctx);
+    pictor::graphs::CC cc(ctx, free_mem);
 
     double total_ms = 0.0;
     double loop_ms  = 0.0;

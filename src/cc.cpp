@@ -35,7 +35,7 @@ void split_grid(uint32_t groups, uint32_t& x, uint32_t& y)
 }
 } // namespace
 
-CC::CC(Context& ctx) : ctx(ctx)
+CC::CC(Context& ctx, size_t pool_bytes) : ctx(ctx), pool_bytes_(pool_bytes)
 {
     exec.reset(CCExec::create(ctx).val().release());
     prepare_exec.reset(PrepareExec::create(ctx).val().release());
@@ -71,7 +71,8 @@ void CC::prepare(Graph const& g)
     CheckAllocation(d_parent, "cc: parent");
     CheckAllocation(d_counters, "cc: counters");
 
-    const uint64_t avail = static_cast<uint64_t>(ctx.get_device_free_memory() * 0.95);
+    const uint64_t avail = pool_bytes_ ? pool_bytes_
+                                       : static_cast<uint64_t>(ctx.get_device_free_memory() * 0.95);
     uint64_t cap = std::min<uint64_t>(num_edges_, (avail * 55 / 100) / (2 * sizeof(uint32_t)));
     if (cap == 0)
         cap = 1;

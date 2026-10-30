@@ -21,7 +21,8 @@ struct Graph;
 // ones, the mesh stage performs one conditional root hook per live edge.
 class CC {
   public:
-    explicit CC(Context& ctx);
+    // `pool_bytes` is the device pool the driver created for this context.
+    explicit CC(Context& ctx, size_t pool_bytes = 0);
     ~CC();
 
     // Runs the round loop and returns the number of rounds executed. With
@@ -49,6 +50,7 @@ class CC {
     void release();
 
     Context& ctx;
+    size_t   pool_bytes_ = 0;
     std::unique_ptr<CCExec> exec;
     std::unique_ptr<PrepareExec> prepare_exec;
 
