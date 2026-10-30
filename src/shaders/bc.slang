@@ -47,19 +47,20 @@ struct SharedBCFwdPayload {
 };
 groupshared SharedBCFwdPayload bcFwdPayload;
 
+// Level state on the device, so a whole batch of levels runs from one host
+// submission: [0] frontier base, [1] frontier count, [2] next base,
+// [3] levels recorded, [4] frontier capacity. counters[0] holds the claims of
+// the running level and is reset by bc_step_compute.
 struct BCFwdIn {
     uint64_t* row_offsets;
     uint32_t* column_indices;
     uint32_t* records_u;
     float*    records_f;
     uint64_t* frontier;
-    uint64_t* next_frontier;
+    uint64_t* level_state;
     uint32_t* counters;
-    uint64_t num_vertices;
-    uint64_t frontier_base;
-    uint64_t frontier_count;
-    uint64_t next_base;
-    uint32_t level;
+    uint64_t  num_vertices;
+    uint32_t  level;
 };
 // @bind(bc_fwd)
 [[vk::push_constant]]
@@ -74,6 +75,9 @@ void bc_fwd_task(
     uint g = (gid.y * cMaxMeshDim) + gid.x;
     uint64_t group_base = uint64_t(g) * cGroupItems;
 
+    uint64_t base  = At(bcFwdIn.level_state, 0);
+    uint64_t count = At(bcFwdIn.level_state, 1);
+
     uint running = 0;
     [unroll]
     for (uint i = 0; i < cItemsPerLane; ++i) {
@@ -86,8 +90,8 @@ void bc_fwd_task(
         uint64_t row    = 0;
         float    sigma  = 0.0f;
 
-        if (local < bcFwdIn.frontier_count) {
-            uint64_t entry = At(bcFwdIn.frontier, bcFwdIn.frontier_base + local);
+        if (local < count) {
+            uint64_t entry = At(bcFwdIn.frontier, base + local);
             source = uint(entry >> 32);
             uint u = uint(entry & 0xFFFFFFFFu);
             uint64_t first = At(bcFwdIn.row_offsets, u);
@@ -178,18 +182,63 @@ void bc_fwd_mesh(
 
     uint wave_claims = WaveActiveCountBits(claimed != 0u);
     uint wave_offset = WavePrefixCountBits(claimed != 0u);
-    uint base        = 0;
+    uint reserved    = 0;
     if (WaveIsFirstLane() && wave_claims > 0) {
-        InterlockedAdd(*Splice(bcFwdIn.counters, 0), wave_claims, base);
+        InterlockedAdd(*Splice(bcFwdIn.counters, 0), wave_claims, reserved);
     }
-    base = WaveReadLaneFirst(base);
+    reserved = WaveReadLaneFirst(reserved);
 
     if (claimed != 0) {
-        *Splice(bcFwdIn.next_frontier, bcFwdIn.next_base + uint64_t(base) + uint64_t(wave_offset)) =
-            (uint64_t(inPayload.source[item]) << 32) | uint64_t(w);
+        uint64_t slot = At(bcFwdIn.level_state, 2) + uint64_t(reserved) + uint64_t(wave_offset);
+        if (slot < At(bcFwdIn.level_state, 4)) {
+            *Splice(bcFwdIn.frontier, slot) =
+                (uint64_t(inPayload.source[item]) << 32) | uint64_t(w);
+        }
     }
 
     SetMeshOutputCounts(0, 0);
+}
+
+// One thread that advances the device-side level state by one level: records
+// the level it is about to run, consumes the previous level's claim count,
+// resets the claim counter and writes the indirect task grid for the level.
+struct BCStepIn {
+    uint64_t* level_state;
+    uint64_t* levels;
+    uint32_t* counters;
+    uint32_t* grid;
+    uint64_t  levels_capacity;
+};
+// @bind(bc_step_compute)
+[[vk::push_constant]]
+uniform BCStepIn bcStepIn;
+
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void bc_step_compute(uint3 tid : SV_DispatchThreadID) {
+    // The pending claim count of the previous level is this level's item count
+    // (every claim is a distinct vertex), and state[2] already holds this
+    // level's frontier base.
+    uint64_t base     = At(bcStepIn.level_state, 2);
+    uint64_t produced = uint64_t(At(bcStepIn.counters, 0));
+    *Splice(bcStepIn.level_state, 0) = base;
+    *Splice(bcStepIn.level_state, 1) = produced;
+    *Splice(bcStepIn.level_state, 2) = base + produced;
+    *Splice(bcStepIn.counters, 0)    = 0u;
+
+    uint64_t recorded = At(bcStepIn.level_state, 3);
+    if (recorded < bcStepIn.levels_capacity) {
+        *Splice(bcStepIn.levels, 2 * recorded)     = base;
+        *Splice(bcStepIn.levels, 2 * recorded + 1) = produced;
+        *Splice(bcStepIn.level_state, 3)           = recorded + 1;
+    }
+
+    uint64_t groups = (produced + cGroupItems - 1) / cGroupItems;
+    uint64_t gx     = min(groups, uint64_t(cMaxMeshDim));
+    uint64_t gy     = groups > cMaxMeshDim ? ((groups + cMaxMeshDim - 1) / cMaxMeshDim) : 1;
+    *Splice(bcStepIn.grid, 0) = uint32_t(gx);
+    *Splice(bcStepIn.grid, 1) = uint32_t(gy);
+    *Splice(bcStepIn.grid, 2) = 1u;
 }
 
 struct BCBwdIn {

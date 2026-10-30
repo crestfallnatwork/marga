@@ -67,13 +67,15 @@ BC::BC(Context& ctx, size_t pool_bytes) : ctx(ctx), pool_bytes_(pool_bytes)
 {
     fwd_exec.reset(FwdExec::create(ctx).val().release());
     bwd_exec.reset(BwdExec::create(ctx).val().release());
+    step_exec.reset(StepExec::create(ctx).val().release());
     prepare_exec.reset(PrepareExec::create(ctx).val().release());
 }
 
 BC::~BC()
 {
     release();
-    drop(ctx, h_counters);
+    drop(ctx, h_state);
+    drop(ctx, h_levels);
     drop(ctx, h_delta);
 }
 
@@ -82,6 +84,9 @@ void BC::release()
     drop(ctx, d_records);
     drop(ctx, d_frontier);
     drop(ctx, d_counters);
+    drop(ctx, d_level_state);
+    drop(ctx, d_levels);
+    drop(ctx, d_grid);
 }
 
 uint32_t BC::choose_sources(uint64_t num_vertices, size_t pool_bytes)
@@ -115,9 +120,32 @@ void BC::allocate(uint64_t num_vertices, uint32_t sources, uint32_t group)
     d_counters = ctx.pool_allocator->allocate(2 * sizeof(uint32_t), 0);
     CheckAllocation(d_counters, "bc: counters");
 
-    if (!h_counters.mappedPtr)
-        h_counters = ctx.pinned_allocator->allocate(2 * sizeof(uint32_t), 0);
-    CheckAllocation(h_counters, "bc: host counters");
+    // [0] frontier base, [1] frontier count, [2] next base, [3] levels
+    // recorded, [4] frontier capacity.
+    d_level_state = ctx.pool_allocator->allocate(5 * sizeof(uint64_t), 0);
+    CheckAllocation(d_level_state, "bc: level state");
+
+    // (base, count) per level, recorded by the step shader.
+    levels_capacity_ = std::min<uint64_t>(num_vertices + 1, 1ull << 22);
+    d_levels = ctx.pool_allocator->allocate(levels_capacity_ * 2 * sizeof(uint64_t), 0);
+    CheckAllocation(d_levels, "bc: levels");
+
+    d_grid = ctx.pool_allocator->allocate(4 * sizeof(uint32_t), 0);
+    CheckAllocation(d_grid, "bc: indirect grid");
+
+    if (!h_state.mappedPtr)
+        h_state = ctx.pinned_allocator->allocate(5 * sizeof(uint64_t), 0);
+    CheckAllocation(h_state, "bc: host level state");
+    if (!h_levels.mappedPtr || h_levels.size < levels_capacity_ * 2 * sizeof(uint64_t)) {
+        drop(ctx, h_levels);
+        h_levels = ctx.pinned_allocator->allocate(levels_capacity_ * 2 * sizeof(uint64_t), 0);
+        CheckAllocation(h_levels, "bc: host levels");
+    }
+
+    // Frontier capacity is published to the shaders through the level state.
+    ctx.barrier(d_level_state, Access::Read, Access::TransferWrite);
+    ctx.update(d_level_state, 4 * sizeof(uint64_t), sizeof(uint64_t), &frontier_cap_);
+    ctx.barrier(d_level_state, Access::TransferWrite, Access::Read);
 }
 
 void BC::prepare(uint32_t sources)
@@ -128,9 +156,6 @@ void BC::prepare(uint32_t sources)
     uint32_t       gx, gy;
     split_grid(static_cast<uint32_t>(groups), gx, gy);
     const uint64_t stride = static_cast<uint64_t>(gx) * cPrepThreads;
-
-    ctx.fill(d_counters, 0);
-    ctx.barrier(d_counters, Access::TransferWrite, Access::Write);
 
     prepare_exec->record(static_cast<uint32_t>(stride),
                          static_cast<uint32_t>((groups + gx - 1) / gx),
@@ -159,7 +184,7 @@ void BC::seed_frontier(uint32_t first_source, uint32_t last_source)
     ctx.barrier(d_frontier, Access::TransferWrite, Access::Read);
 }
 
-uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group)
+uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t levels_per_submit)
 {
     using namespace std::chrono;
 
@@ -174,6 +199,7 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group)
 
     num_sources_ = std::max<uint32_t>(1, std::min<uint32_t>(sources, num_vertices_));
     group_       = std::max<uint32_t>(1, std::min<uint32_t>(group, num_sources_));
+    levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
 
     const auto init_t0 = high_resolution_clock::now();
     allocate(num_vertices_, num_sources_, group_);
@@ -194,6 +220,34 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group)
     return levels_;
 }
 
+void BC::read_levels(uint64_t recorded, std::vector<uint64_t>& level_base,
+                     std::vector<uint64_t>& level_count)
+{
+    const uint64_t n = std::min<uint64_t>(recorded, levels_capacity_);
+    const size_t   bytes = static_cast<size_t>(n) * 2 * sizeof(uint64_t);
+
+    ctx.barrier(d_levels, Access::Write, Access::TransferRead);
+    ctx.copy(view(d_levels, 0, bytes), view(h_levels, 0, bytes));
+    ctx.fsync();
+    ctx.invalidate(h_levels);
+    ctx.barrier(d_levels, Access::TransferRead, Access::Write);
+
+    const uint64_t* levels = reinterpret_cast<const uint64_t*>(h_levels.mappedPtr);
+    level_base.resize(n);
+    level_count.resize(n);
+    for (uint64_t i = 0; i < n; ++i) {
+        level_base[i]  = levels[2 * i];
+        level_count[i] = levels[2 * i + 1];
+    }
+
+    // The last submissions may have run levels with an empty frontier; they
+    // have no items, so the backward pass never visits them.
+    while (level_count.size() > 1 && level_count.back() == 0) {
+        level_base.pop_back();
+        level_count.pop_back();
+    }
+}
+
 uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source,
                      std::vector<uint64_t>& level_base, std::vector<uint64_t>& level_count)
 {
@@ -203,85 +257,111 @@ uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source
     // The previous group's dispatches read the record rows this group writes.
     ctx.barrier(d_records, Access::Read, Access::Write);
 
-    const auto fwd_t0 = high_resolution_clock::now();
+    level_base.clear();
+    level_count.clear();
 
     uint64_t base  = 0;
     uint64_t count = last_source - first_source;
     uint32_t level = 0;
 
-    level_base.clear();
-    level_count.clear();
-    level_base.push_back(base);
-    level_count.push_back(count);
+    // Levels recorded so far (device side) start at zero for every group.
+    const uint64_t zero = 0;
+    ctx.barrier(d_level_state, Access::Read, Access::TransferWrite);
+    ctx.update(d_level_state, 3 * sizeof(uint64_t), sizeof(uint64_t), &zero);
+    ctx.barrier(d_level_state, Access::TransferWrite, Access::Read);
 
+    const auto fwd_t0 = high_resolution_clock::now();
+
+    uint64_t recorded = 0;
     while (count > 0) {
-        const uint64_t next_base = base + count;
-        if (next_base > frontier_cap_) {
-            std::fprintf(stderr, "bc: frontier capacity %llu exceeded at level %u\n",
-                         static_cast<unsigned long long>(frontier_cap_), level);
-            std::exit(1);
+        // The step shader consumes the pending count from counters[0] and the
+        // next frontier base from state[2], so seed both for this submission.
+        const uint32_t pending = static_cast<uint32_t>(count);
+        const uint64_t seeded  = base;  // state[2] = this submission's first base
+
+        ctx.barrier({ResourceBarrier{&d_level_state, Access::TransferRead, Access::TransferWrite},
+                     ResourceBarrier{&d_level_state, Access::Read, Access::TransferWrite},
+                     ResourceBarrier{&d_counters, Access::Read, Access::TransferWrite}});
+        ctx.update(d_level_state, 2 * sizeof(uint64_t), sizeof(uint64_t), &seeded);
+        ctx.update(d_counters, 0, sizeof(uint32_t), &pending);
+        ctx.barrier({ResourceBarrier{&d_level_state, Access::TransferWrite, Access::Read},
+                     ResourceBarrier{&d_counters, Access::TransferWrite, Access::Write}});
+
+        for (uint32_t i = 0; i < levels_per_submit_; ++i) {
+            step_exec->record(1, 1, 1,
+                              {
+                                  .level_state     = reinterpret_cast<uint64_t*>(d_level_state.address),
+                                  .levels          = reinterpret_cast<uint64_t*>(d_levels.address),
+                                  .counters        = reinterpret_cast<uint32_t*>(d_counters.address),
+                                  .grid            = reinterpret_cast<uint32_t*>(d_grid.address),
+                                  .levels_capacity = levels_capacity_,
+                              });
+            ctx.barrier({ResourceBarrier{&d_level_state, Access::Write, Access::Read},
+                         ResourceBarrier{&d_grid, Access::Write, Access::IndirectRead},
+                         ResourceBarrier{&d_counters, Access::Write, Access::Write}});
+
+            fwd_exec->record_indirect(
+                d_grid, {
+                            .row_offsets    = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
+                            .column_indices = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
+                            .records_u      = reinterpret_cast<uint32_t*>(d_records.address),
+                            .records_f      = reinterpret_cast<float*>(d_records.address),
+                            .frontier       = reinterpret_cast<uint64_t*>(d_frontier.address),
+                            .level_state    = reinterpret_cast<uint64_t*>(d_level_state.address),
+                            .counters       = reinterpret_cast<uint32_t*>(d_counters.address),
+                            .num_vertices   = num_vertices_,
+                            .level          = level + i,
+                        });
+
+            // This level's distance/sigma/frontier writes are read by the next
+            // step and by the next level; the level state is about to be
+            // rewritten by the next step.
+            ctx.barrier({ResourceBarrier{&d_records, Access::Write, Access::Read},
+                         ResourceBarrier{&d_frontier, Access::Write, Access::Read},
+                         ResourceBarrier{&d_counters, Access::Write, Access::Read},
+                         ResourceBarrier{&d_level_state, Access::Read, Access::Write},
+                         ResourceBarrier{&d_grid, Access::IndirectRead, Access::Write}});
         }
 
-        ctx.fill(d_counters, 0);
-        ctx.barrier(d_counters, Access::TransferWrite, Access::Write);
-
-        const uint32_t groups = static_cast<uint32_t>(
-            std::min<uint64_t>((count + cTaskItems - 1) / cTaskItems, 1ull << 31));
-        uint32_t gx, gy;
-        split_grid(groups, gx, gy);
-
-        fwd_exec->record_raw(gx, gy, 1,
-                             {
-                                 .row_offsets    = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
-                                 .column_indices = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
-                                 .records_u      = reinterpret_cast<uint32_t*>(d_records.address),
-                                 .records_f      = reinterpret_cast<float*>(d_records.address),
-                                 .frontier       = reinterpret_cast<uint64_t*>(d_frontier.address),
-                                 .next_frontier  = reinterpret_cast<uint64_t*>(d_frontier.address),
-                                 .counters       = reinterpret_cast<uint32_t*>(d_counters.address),
-                                 .num_vertices   = num_vertices_,
-                                 .frontier_base  = base,
-                                 .frontier_count = count,
-                                 .next_base      = next_base,
-                                 .level          = level,
-                             });
-
-        ctx.barrier({ResourceBarrier{&d_records, Access::Write, Access::Read},
-                     ResourceBarrier{&d_frontier, Access::Write, Access::Read},
-                     ResourceBarrier{&d_counters, Access::Write, Access::TransferRead}});
-
-        ctx.copy(d_counters, h_counters);
+        ctx.barrier({ResourceBarrier{&d_level_state, Access::Write, Access::TransferRead},
+                     ResourceBarrier{&d_level_state, Access::Read, Access::TransferRead}});
+        ctx.copy(view(d_level_state, 0, 4 * sizeof(uint64_t)), view(h_state, 0, 4 * sizeof(uint64_t)));
         ctx.fsync();
-        ctx.invalidate(h_counters);
-        ctx.barrier(d_counters, Access::TransferRead, Access::TransferWrite);
+        ctx.invalidate(h_state);
+        ctx.barrier(d_level_state, Access::TransferRead, Access::Read);
 
-        const uint64_t produced = *reinterpret_cast<uint32_t*>(h_counters.mappedPtr);
-        const uint64_t peak     = next_base + produced;
-        frontier_peak_          = std::max(frontier_peak_, peak);
+        const uint64_t* st = reinterpret_cast<const uint64_t*>(h_state.mappedPtr);
+        base     = st[0];
+        count    = st[1];
+        recorded = st[3];
+        frontier_peak_ = std::max(frontier_peak_, st[2]);
 
         if (trace_enabled())
             std::fprintf(stderr,
-                         "bc fwd level %u: items=%llu produced=%llu wall=%.3f ms\n", level,
+                         "bc fwd batch: levels %u..%u, next base=%llu count=%llu recorded=%llu "
+                         "wall=%.3f ms\n",
+                         level, level + levels_per_submit_ - 1, static_cast<unsigned long long>(base),
                          static_cast<unsigned long long>(count),
-                         static_cast<unsigned long long>(produced),
+                         static_cast<unsigned long long>(recorded),
                          duration<double, std::milli>(high_resolution_clock::now() - fwd_t0)
                              .count());
 
-        if (peak > frontier_cap_) {
-            std::fprintf(stderr, "bc: next frontier overflow (%llu > %llu)\n",
-                         static_cast<unsigned long long>(peak),
+        if (recorded >= levels_capacity_) {
+            std::fprintf(stderr, "bc: more than %llu levels; raise the levels capacity\n",
+                         static_cast<unsigned long long>(levels_capacity_));
+            std::exit(1);
+        }
+        if (st[2] > frontier_cap_) {
+            std::fprintf(stderr, "bc: frontier overflow (%llu > %llu)\n",
+                         static_cast<unsigned long long>(st[2]),
                          static_cast<unsigned long long>(frontier_cap_));
             std::exit(1);
         }
 
-        base = next_base;
-        count = produced;
-        ++level;
-        if (count > 0) {
-            level_base.push_back(base);
-            level_count.push_back(count);
-        }
+        level += levels_per_submit_;
     }
+
+    read_levels(recorded, level_base, level_count);
 
     ctx.fsync();
     forward_ms_ += duration<double, std::milli>(high_resolution_clock::now() - fwd_t0).count();

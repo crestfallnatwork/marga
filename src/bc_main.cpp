@@ -33,6 +33,7 @@ int main(int argc, char* argv[])
     uint32_t    num_runs    = 1;
     uint32_t    num_sources = 0;
     uint32_t    group_size  = 0;
+    uint32_t    levels_per_submit = 16;
 
     auto cli = group(
         value("graph file", graph_file) % "MTX graph file to process",
@@ -42,6 +43,8 @@ int main(int argc, char* argv[])
             "number of strided sources (default: largest of 64/32/16/8/4 that fits)",
         (option("-g", "--group") & value("sources per dispatch", group_size)) %
             "sources sharing one frontier and dispatch (default: all of -k)",
+        (option("-b", "--batch") & value("levels per submit", levels_per_submit)) %
+            "forward levels per host submission (1 = one fence wait per level)",
         option("-v", "--validate").set(validate) %
             "validate GPU dependency values against a CPU Brandes reference",
         option("-s", "--sym").set(sym) %
@@ -99,7 +102,7 @@ int main(int argc, char* argv[])
     std::cout << std::format("Running BC {} times...\n", num_runs);
     for (uint32_t run = 0; run < num_runs; ++run) {
         const auto t1 = high_resolution_clock::now();
-        levels        = bc.run(g, num_sources, group_size);
+        levels        = bc.run(g, num_sources, group_size, levels_per_submit);
         const auto t2 = high_resolution_clock::now();
 
         const double ms = duration<double, std::milli>(t2 - t1).count();
@@ -128,8 +131,8 @@ int main(int argc, char* argv[])
     std::cout << std::format("  Average BC forward:  {:.3f} ms\n", fwd_ms / num_runs);
     std::cout << std::format("  Average BC backward: {:.3f} ms\n", bwd_ms / num_runs);
     std::cout << std::format("  Levels:              {}\n", levels);
-    std::cout << std::format("  Sources:             {} (group {})\n", bc.num_sources(),
-                             bc.group_size());
+    std::cout << std::format("  Sources:             {} (group {}, {} levels per submit)\n",
+                             bc.num_sources(), bc.group_size(), levels_per_submit);
     std::cout << std::format("  Frontier entries:    {} of {} ({:.2f} GiB records, {:.2f} GiB "
                              "frontier)\n",
                              bc.frontier_peak(),

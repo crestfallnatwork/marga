@@ -29,8 +29,10 @@ class BC {
 
     // Samples `sources` strided sources (i * V / sources). `group` sources
     // share one frontier and one dispatch per level; all sources are processed
-    // either way. Returns the number of levels of the deepest group.
-    uint32_t run(Graph const& g, uint32_t sources, uint32_t group);
+    // either way. `levels_per_submit` forward levels run per host submission
+    // (1 = one fence wait per level). Returns the levels of the deepest group.
+    uint32_t run(Graph const& g, uint32_t sources, uint32_t group,
+                 uint32_t levels_per_submit = 16);
 
     // Largest source count in {4, 8, 16, 32, 64} whose records and frontier
     // fit in 60% of `pool_bytes`.
@@ -56,6 +58,8 @@ class BC {
     using FwdIn       = bc_shader::BCFwdIn;
     using BwdExec     = bc_shader::BcBwdComputeExecutor;
     using BwdIn       = bc_shader::BcBwdCompute;
+    using StepExec    = bc_shader::BcStepComputeExecutor;
+    using StepIn      = bc_shader::BCStepIn;
     using PrepareExec = bc_shader::BcPrepareComputeExecutor;
     using PrepareIn   = bc_shader::BcPrepareCompute;
 
@@ -66,6 +70,8 @@ class BC {
     void seed_frontier(uint32_t first_source, uint32_t last_source);
     uint32_t forward(Graph const& g, uint32_t first_source, uint32_t last_source,
                      std::vector<uint64_t>& level_base, std::vector<uint64_t>& level_count);
+    void     read_levels(uint64_t recorded, std::vector<uint64_t>& level_base,
+                         std::vector<uint64_t>& level_count);
     void     backward(Graph const& g, std::vector<uint64_t> const& level_base,
                       std::vector<uint64_t> const& level_count);
 
@@ -74,12 +80,17 @@ class BC {
 
     std::unique_ptr<FwdExec>     fwd_exec;
     std::unique_ptr<BwdExec>     bwd_exec;
+    std::unique_ptr<StepExec>    step_exec;
     std::unique_ptr<PrepareExec> prepare_exec;
 
     AllocationInfo d_records{};
     AllocationInfo d_frontier{};
     AllocationInfo d_counters{};
-    AllocationInfo h_counters{};
+    AllocationInfo d_level_state{};
+    AllocationInfo d_levels{};
+    AllocationInfo d_grid{};
+    AllocationInfo h_state{};
+    AllocationInfo h_levels{};
     AllocationInfo h_delta{};
 
     uint64_t num_vertices_   = 0;
@@ -88,6 +99,8 @@ class BC {
     uint32_t num_sources_    = 0;
     uint32_t group_          = 0;
     uint32_t levels_         = 0;
+    uint32_t levels_per_submit_ = 16;
+    uint64_t levels_capacity_   = 0;
     double   init_ms_        = 0.0;
     double   forward_ms_     = 0.0;
     double   backward_ms_    = 0.0;
