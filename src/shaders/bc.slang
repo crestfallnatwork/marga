@@ -64,8 +64,6 @@ struct BCFwdIn {
     uint32_t* counters;
     uint64_t  num_vertices;
     uint32_t  level;
-    // Probe: accumulate sigma without the atomic (values wrong, timing only).
-    uint32_t  plain_sigma;
 };
 // @bind(bc_fwd)
 [[vk::push_constant]]
@@ -185,11 +183,7 @@ void bc_fwd_mesh(
     // claiming one; sigma of the source vertex is final after the previous
     // level's barrier, so float accumulation order does not matter.
     if (distance == next_level) {
-        if (bcFwdIn.plain_sigma != 0) {
-            *Splice(bcFwdIn.records_f, row + 1) += inPayload.sigma[item];
-        } else {
-            InterlockedAdd(*Splice(bcFwdIn.records_f, row + 1), inPayload.sigma[item]);
-        }
+        InterlockedAdd(*Splice(bcFwdIn.records_f, row + 1), inPayload.sigma[item]);
     }
 
     uint wave_claims = WaveActiveCountBits(claimed != 0u);
