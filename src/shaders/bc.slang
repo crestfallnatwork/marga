@@ -254,14 +254,23 @@ struct BCBwdIn {
     uint32_t* records_u;
     float*    records_f;
     uint64_t* frontier;
+    uint32_t* hub_list;
+    uint32_t* counters;
     uint64_t frontier_base;
     uint64_t frontier_count;
     uint64_t num_vertices;
     uint64_t stride;
     uint32_t level;
+    // Items whose out-degree reaches this are expanded one warp per item by
+    // bc_bwdw_compute instead of one thread per item here. Zero or ~0 selects
+    // the plain one-thread-per-item pass for the whole level.
+    uint32_t hub_threshold;
+    uint32_t wave_count;
 };
 // @bind(bc_bwd_compute)
 // @bind(bc_bwdm_task)
+// @bind(bc_bwdh_compute)
+// @bind(bc_bwdw_compute)
 [[vk::push_constant]]
 uniform BCBwdIn bcBwdIn;
 
@@ -388,11 +397,16 @@ void bc_bwd_compute(uint3 tid : SV_DispatchThreadID) {
     uint     u      = uint(entry & 0xFFFFFFFFu);
     uint64_t row    = uint64_t(source) * bcBwdIn.num_vertices * cRecordWords;
     uint64_t first  = At(bcBwdIn.row_offsets, u);
+    uint64_t end    = At(bcBwdIn.row_offsets, uint64_t(u) + 1);
+
+    // Hub items are expanded across a warp by bc_bwdw_compute.
+    if (end - first >= uint64_t(bcBwdIn.hub_threshold)) {
+        return;
+    }
 
     float sigma_u = At(bcBwdIn.records_f, row + uint64_t(u) * cRecordWords + 1);
     float acc     = 0.0f;
 
-    uint64_t end = At(bcBwdIn.row_offsets, uint64_t(u) + 1);
     for (uint64_t e = first; e < end; ++e) {
         uint     w    = At(bcBwdIn.column_indices, e);
         uint64_t slot = row + uint64_t(w) * cRecordWords;
@@ -403,6 +417,69 @@ void bc_bwd_compute(uint3 tid : SV_DispatchThreadID) {
     }
 
     *Splice(bcBwdIn.records_f, row + uint64_t(u) * cRecordWords + 2) = acc;
+}
+
+// Hub expansion of the dependency pass: the frontier items whose out-degree
+// reaches the threshold are collected here, so the warp pass can process each
+// of them with a whole warp and every other item with one thread.
+[shader("compute")]
+[numthreads(256, 1, 1)]
+void bc_bwdh_compute(uint3 tid : SV_DispatchThreadID) {
+    uint64_t item = uint64_t(tid.y) * bcBwdIn.stride + tid.x;
+    if (item >= bcBwdIn.frontier_count) {
+        return;
+    }
+
+    uint64_t entry = At(bcBwdIn.frontier, bcBwdIn.frontier_base + item);
+    uint     u     = uint(entry & 0xFFFFFFFFu);
+    uint64_t first = At(bcBwdIn.row_offsets, u);
+    if (At(bcBwdIn.row_offsets, uint64_t(u) + 1) - first < uint64_t(bcBwdIn.hub_threshold)) {
+        return;
+    }
+
+    uint slot = 0;
+    InterlockedAdd(*Splice(bcBwdIn.counters, 1), 1u, slot);
+    *Splice(bcBwdIn.hub_list, slot) = uint(item);
+}
+
+// One warp per hub item: the lanes stride the row, the warp reduces, one store.
+[shader("compute")]
+[numthreads(128, 1, 1)]
+void bc_bwdw_compute(
+    uint3 gid : SV_GroupID,
+    uint3 tid : SV_DispatchThreadID,
+    uint  lid : SV_GroupIndex
+) {
+    const uint warps_per_group = 4;
+    uint warp = (gid.y * cMaxMeshDim + gid.x) * warps_per_group + (lid / WAVE_SIZE);
+    uint lane = tid.x % WAVE_SIZE;
+
+    uint count = At(bcBwdIn.counters, 1);
+    for (uint i = warp; i < count; i += bcBwdIn.wave_count) {
+        uint64_t item  = uint64_t(At(bcBwdIn.hub_list, i));
+        uint64_t entry = At(bcBwdIn.frontier, bcBwdIn.frontier_base + item);
+        uint     source = uint(entry >> 32);
+        uint     u      = uint(entry & 0xFFFFFFFFu);
+        uint64_t row    = uint64_t(source) * bcBwdIn.num_vertices * cRecordWords;
+        uint64_t first  = At(bcBwdIn.row_offsets, u);
+        uint64_t end    = At(bcBwdIn.row_offsets, uint64_t(u) + 1);
+        float    sigma_u = At(bcBwdIn.records_f, row + uint64_t(u) * cRecordWords + 1);
+
+        float acc = 0.0f;
+        for (uint64_t e = first + lane; e < end; e += WAVE_SIZE) {
+            uint     w    = At(bcBwdIn.column_indices, e);
+            uint64_t slot = row + uint64_t(w) * cRecordWords;
+            if (At(bcBwdIn.records_u, slot) == bcBwdIn.level + 1u) {
+                acc += sigma_u / At(bcBwdIn.records_f, slot + 1) *
+                       (1.0f + At(bcBwdIn.records_f, slot + 2));
+            }
+        }
+
+        acc = WaveActiveSum(acc);
+        if (lane == 0) {
+            *Splice(bcBwdIn.records_f, row + uint64_t(u) * cRecordWords + 2) = acc;
+        }
+    }
 }
 
 // One-time setup per source row: distance unvisited, sigma and delta zero, and

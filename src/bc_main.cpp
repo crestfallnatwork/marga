@@ -34,6 +34,7 @@ int main(int argc, char* argv[])
     uint32_t    num_sources = 0;
     uint32_t    group_size  = 0;
     uint32_t    levels_per_submit = 8;
+    uint32_t    hub_degree    = 64;
     std::string backward_mode = "gather";
 
     auto cli = group(
@@ -48,6 +49,8 @@ int main(int argc, char* argv[])
             "forward levels per host submission (1 = one fence wait per level)",
         (option("-B", "--backward") & value("gather|scatter", backward_mode)) %
             "dependency pass: per-item gather or per-edge atomic scatter",
+        (option("-H", "--hub") & value("degree", hub_degree)) %
+            "out-degree at which a dependency item is expanded over one warp (0: never)",
         option("-v", "--validate").set(validate) %
             "validate GPU dependency values against a CPU Brandes reference",
         option("-s", "--sym").set(sym) %
@@ -106,7 +109,7 @@ int main(int argc, char* argv[])
     for (uint32_t run = 0; run < num_runs; ++run) {
         const auto t1 = high_resolution_clock::now();
         levels        = bc.run(g, num_sources, group_size, levels_per_submit,
-                               backward_mode == "scatter");
+                               backward_mode == "scatter", hub_degree);
         const auto t2 = high_resolution_clock::now();
 
         const double ms = duration<double, std::milli>(t2 - t1).count();
@@ -139,6 +142,7 @@ int main(int argc, char* argv[])
                              "backward), {} live\n",
                              bc.num_sources(), bc.group_size(), levels_per_submit, backward_mode,
                              bc.live_sources());
+    std::cout << std::format("  Hub expansion:       out-degree >= {}\n", bc.hub_threshold());
     std::cout << std::format("  Frontier entries:    {} of {} ({:.2f} GiB records, {:.2f} GiB "
                              "frontier)\n",
                              bc.frontier_peak(),

@@ -30,9 +30,12 @@ class BC {
     // Samples `sources` strided sources (i * V / sources). `group` sources
     // share one frontier and one dispatch per level; all sources are processed
     // either way. `levels_per_submit` forward levels run per host submission
-    // (1 = one fence wait per level). Returns the levels of the deepest group.
+    // (1 = one fence wait per level). `hub_degree` expands dependency items of
+    // that out-degree or more over one warp each (0: one thread per item).
+    // Returns the levels of the deepest group.
     uint32_t run(Graph const& g, uint32_t sources, uint32_t group,
-                 uint32_t levels_per_submit = 8, bool scatter_backward = false);
+                 uint32_t levels_per_submit = 8, bool scatter_backward = false,
+                 uint32_t hub_degree = 64);
 
     // Largest source count in {4, 8, 16, 32, 64} whose records and frontier
     // fit in 60% of `pool_bytes`.
@@ -56,6 +59,9 @@ class BC {
     // Rows with state allocated: the sampled sources that have an out-edge.
     uint32_t live_sources() const { return rows_; }
     uint32_t group_size() const { return group_; }
+    // Out-degree at which the dependency pass expands an item over one warp
+    // (0 when the path is off for this graph).
+    uint32_t hub_threshold() const { return hub_threshold_; }
     uint64_t vertex_count() const { return num_vertices_; }
     uint64_t frontier_peak() const { return frontier_peak_; }
 
@@ -64,6 +70,8 @@ class BC {
     using BwdExec     = bc_shader::BcBwdComputeExecutor;
     using BwdMeshExec = bc_shader::BC_BWDMExecutor;
     using BwdIn       = bc_shader::BcBwdCompute;
+    using HubExec     = bc_shader::BcBwdhComputeExecutor;
+    using WarpExec    = bc_shader::BcBwdwComputeExecutor;
     using StepExec    = bc_shader::BcStepComputeExecutor;
     using StepIn      = bc_shader::BCStepIn;
     using PrepareExec = bc_shader::BcPrepareComputeExecutor;
@@ -89,6 +97,8 @@ class BC {
     std::unique_ptr<FwdExec>     fwd_exec;
     std::unique_ptr<BwdExec>     bwd_exec;
     std::unique_ptr<BwdMeshExec> bwdm_exec;
+    std::unique_ptr<HubExec>     hub_exec;
+    std::unique_ptr<WarpExec>    warp_exec;
     std::unique_ptr<StepExec>    step_exec;
     std::unique_ptr<PrepareExec> prepare_exec;
 
@@ -99,6 +109,7 @@ class BC {
     AllocationInfo d_levels{};
     AllocationInfo d_grid{};
     AllocationInfo d_sources{};
+    AllocationInfo d_hub{};
     AllocationInfo h_counters{};
     AllocationInfo h_state{};
     AllocationInfo h_levels{};
@@ -116,6 +127,7 @@ class BC {
     uint32_t levels_per_submit_ = 8;
     uint64_t levels_capacity_   = 0;
     bool     scatter_backward_  = false;
+    uint32_t hub_threshold_     = 0;
     double   init_ms_        = 0.0;
     double   forward_ms_     = 0.0;
     double   backward_ms_    = 0.0;

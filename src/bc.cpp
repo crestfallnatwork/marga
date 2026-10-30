@@ -25,6 +25,7 @@ namespace {
 // Must match cItemsPerLane * WAVE_SIZE in bc.slang.
 constexpr uint64_t cTaskItems   = 256;
 constexpr uint32_t cBwdThreads  = 128;
+constexpr uint32_t cHubThreads  = 256;
 constexpr uint32_t cPrepThreads = 256;
 
 void split_grid(uint32_t groups, uint32_t& x, uint32_t& y)
@@ -69,6 +70,8 @@ BC::BC(Context& ctx, size_t pool_bytes) : ctx(ctx), pool_bytes_(pool_bytes)
     fwd_exec.reset(FwdExec::create(ctx).val().release());
     bwd_exec.reset(BwdExec::create(ctx).val().release());
     bwdm_exec.reset(BwdMeshExec::create(ctx).val().release());
+    hub_exec.reset(HubExec::create(ctx).val().release());
+    warp_exec.reset(WarpExec::create(ctx).val().release());
     step_exec.reset(StepExec::create(ctx).val().release());
     prepare_exec.reset(PrepareExec::create(ctx).val().release());
 }
@@ -92,6 +95,7 @@ void BC::release()
     drop(ctx, d_levels);
     drop(ctx, d_grid);
     drop(ctx, d_sources);
+    drop(ctx, d_hub);
 }
 
 uint32_t BC::choose_sources(uint64_t num_vertices, size_t pool_bytes)
@@ -151,6 +155,14 @@ void BC::allocate(uint64_t num_vertices, uint32_t sources, uint32_t group)
     d_grid = ctx.pool_allocator->allocate(4 * sizeof(uint32_t), 0);
     CheckAllocation(d_grid, "bc: indirect grid");
 
+    // Indices of the frontier items expanded one warp per item by the hub pass.
+    if (hub_threshold_ > 0) {
+        d_hub = ctx.pool_allocator->allocate(frontier_cap_ * sizeof(uint32_t), 0);
+        CheckAllocation(d_hub,
+                        std::format("bc: hub list ({:.2f} GiB)",
+                                    frontier_cap_ * sizeof(uint32_t) / 1073741824.0));
+    }
+
     if (!h_state.mappedPtr)
         h_state = ctx.pinned_allocator->allocate(5 * sizeof(uint64_t), 0);
     CheckAllocation(h_state, "bc: host level state");
@@ -202,7 +214,7 @@ void BC::seed_frontier(uint32_t first_source, uint32_t last_source)
 }
 
 uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t levels_per_submit,
-                 bool scatter_backward)
+                 bool scatter_backward, uint32_t hub_degree)
 {
     using namespace std::chrono;
 
@@ -230,6 +242,10 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
     group_ = std::max<uint32_t>(1, std::min<uint32_t>(group, std::max<uint32_t>(rows_, 1u)));
     levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
     scatter_backward_  = scatter_backward;
+    // The hub path pays a classify and a warp dispatch per level, so it is only
+    // worth enabling on graphs with enough arcs per vertex to hold hubs.
+    hub_threshold_ =
+        (hub_degree > 0 && g.num_edges >= 8 * num_vertices_) ? hub_degree : 0u;
 
     const auto init_t0 = high_resolution_clock::now();
     if (rows_ == 0) {
@@ -428,6 +444,9 @@ void BC::backward(Graph const& g, std::vector<uint64_t> const& level_base,
     // The forward pass read the record rows; the backward pass writes them.
     ctx.barrier(d_records, Access::Read, Access::Write);
 
+    const bool hub = hub_threshold_ > 0 && d_hub.buffer;
+    const uint32_t gather_threshold = hub ? hub_threshold_ : 0xFFFFFFFFu;
+
     for (size_t l = level_base.size(); l-- > 1;) {
         const uint64_t base  = level_base[l];
         const uint64_t count = level_count[l];
@@ -437,6 +456,63 @@ void BC::backward(Graph const& g, std::vector<uint64_t> const& level_base,
         uint64_t groups = (count + cBwdThreads - 1) / cBwdThreads;
         uint64_t gx     = std::min<uint64_t>(groups, cMaxMeshDim);
         uint64_t gy     = (groups + gx - 1) / gx;
+
+        if (hub) {
+            // Collect the level's hub items (degree >= threshold); the warp
+            // pass expands each of them over one warp, the gather pass below
+            // skips them and handles the rest one thread per item.
+            const uint32_t zero = 0;
+            ctx.barrier(d_counters, Access::Read, Access::TransferWrite);
+            ctx.update(d_counters, sizeof(uint32_t), sizeof(uint32_t), &zero);
+            ctx.barrier(d_counters, Access::TransferWrite, Access::Read);
+
+            const uint64_t hgroups = (count + cHubThreads - 1) / cHubThreads;
+            uint64_t       hx      = std::min<uint64_t>(hgroups, cMaxMeshDim);
+            uint64_t       hy      = (hgroups + hx - 1) / hx;
+            hub_exec->record(static_cast<uint32_t>(hx * cHubThreads), static_cast<uint32_t>(hy), 1,
+                             {
+                                 .row_offsets     = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
+                                 .column_indices  = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
+                                 .records_u       = reinterpret_cast<uint32_t*>(d_records.address),
+                                 .records_f       = reinterpret_cast<float*>(d_records.address),
+                                 .frontier        = reinterpret_cast<uint64_t*>(d_frontier.address),
+                                 .hub_list        = reinterpret_cast<uint32_t*>(d_hub.address),
+                                 .counters        = reinterpret_cast<uint32_t*>(d_counters.address),
+                                 .frontier_base   = base,
+                                 .frontier_count  = count,
+                                 .num_vertices    = num_vertices_,
+                                 .stride          = hx * cHubThreads,
+                                 .level           = static_cast<uint32_t>(l),
+                                 .hub_threshold   = hub_threshold_,
+                                 .wave_count      = 0,
+                             });
+            ctx.barrier({ResourceBarrier{&d_counters, Access::Write, Access::Read},
+                         ResourceBarrier{&d_hub, Access::Write, Access::Read}});
+
+            // A fixed warp grid walks the collected hub list on the device; the
+            // list length never reaches the number of items, so the grid is
+            // sized from the level rather than from the list.
+            const uint32_t blocks = static_cast<uint32_t>(
+                std::min<uint64_t>(std::max<uint64_t>(count / 2048, 8), 8192));
+            const uint32_t warps = blocks * 4;
+            warp_exec->record(blocks * cBwdThreads, 1, 1,
+                              {
+                                  .row_offsets     = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
+                                  .column_indices  = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
+                                  .records_u       = reinterpret_cast<uint32_t*>(d_records.address),
+                                  .records_f       = reinterpret_cast<float*>(d_records.address),
+                                  .frontier        = reinterpret_cast<uint64_t*>(d_frontier.address),
+                                  .hub_list        = reinterpret_cast<uint32_t*>(d_hub.address),
+                                  .counters        = reinterpret_cast<uint32_t*>(d_counters.address),
+                                  .frontier_base   = base,
+                                  .frontier_count  = count,
+                                  .num_vertices    = num_vertices_,
+                                  .stride          = 0,
+                                  .level           = static_cast<uint32_t>(l),
+                                  .hub_threshold   = hub_threshold_,
+                                  .wave_count      = warps,
+                              });
+        }
 
         if (trace_enabled())
             std::fprintf(stderr, "bc bwd level %zu: items=%llu grid=%llux%llu\n", l,
@@ -455,6 +531,7 @@ void BC::backward(Graph const& g, std::vector<uint64_t> const& level_base,
                              .num_vertices   = num_vertices_,
                              .stride         = gx * cBwdThreads,
                              .level          = static_cast<uint32_t>(l),
+                             .hub_threshold  = gather_threshold,
                          });
         // This level's delta is read by the level below.
         ctx.barrier(d_records, Access::Write, Access::Read);
