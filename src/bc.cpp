@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <format>
 
 static const uint32_t cMaxMeshDim  = 65535;
@@ -235,6 +236,34 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
                  bool scatter_backward, uint32_t hub_degree)
 {
     using namespace std::chrono;
+
+    if (trace_enabled()) {
+        // Out-degree distribution, for reading the hub threshold and the skew
+        // of a level's work.
+        static constexpr uint64_t cCut[] = {1, 16, 64, 256, 1024, 4096, 65536};
+        uint64_t                  counts[std::size(cCut)] = {};
+        uint64_t                  arcs[std::size(cCut)]   = {};
+        uint64_t                  max_degree = 0;
+        for (uint64_t v = 0; v < g.num_vertices; ++v) {
+            const uint64_t d = g.row_offsets[v + 1] - g.row_offsets[v];
+            max_degree       = std::max(max_degree, d);
+            for (size_t c = 0; c < std::size(cCut); ++c) {
+                if (d >= cCut[c]) {
+                    ++counts[c];
+                    arcs[c] += d;
+                }
+            }
+        }
+        std::fprintf(stderr, "bc degrees: max %llu, arcs %llu, E/V %.2f\n",
+                     static_cast<unsigned long long>(max_degree),
+                     static_cast<unsigned long long>(g.num_edges),
+                     g.num_vertices ? static_cast<double>(g.num_edges) / g.num_vertices : 0.0);
+        for (size_t c = 0; c < std::size(cCut); ++c)
+            std::fprintf(stderr, "bc degrees: >= %6llu: %8.4f %% of vertices, %6.2f %% of arcs\n",
+                         static_cast<unsigned long long>(cCut[c]),
+                         100.0 * counts[c] / static_cast<double>(g.num_vertices ? g.num_vertices : 1),
+                         100.0 * arcs[c] / static_cast<double>(g.num_edges ? g.num_edges : 1));
+    }
 
     release();
     levels_        = 0;
