@@ -61,15 +61,15 @@ void CC::prepare(Graph const& g)
     num_vertices_ = g.num_vertices;
     num_edges_    = g.num_edges;
 
-    // parent + two ping-pong active pair lists (two u32 per entry).
+    // parent + the first active pair list (two u32 per entry). The second
+    // list is allocated once the first round has measured the live count, so
+    // its size is the live count rather than the edge count.
     const uint64_t list_bytes = num_edges_ * 2 * sizeof(uint32_t);
     d_parent   = ctx.pool_allocator->allocate(num_vertices_ * sizeof(uint32_t), 0);
     d_active[0] = ctx.pool_allocator->allocate(list_bytes, 0);
-    d_active[1] = ctx.pool_allocator->allocate(list_bytes, 0);
     d_counters  = ctx.pool_allocator->allocate(2 * sizeof(uint32_t), 0);
     CheckAllocation(d_parent, "cc: parent");
     CheckAllocation(d_active[0], "cc: active list 0");
-    CheckAllocation(d_active[1], "cc: active list 1");
     CheckAllocation(d_counters, "cc: counters");
 
     if (!h_counters.mappedPtr)
@@ -166,6 +166,10 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
         active_count = produced;
         in           = out;
         buf         ^= 1u;
+        if (!d_active[buf].buffer) {
+            d_active[buf] = ctx.pool_allocator->allocate(active_count * 2 * sizeof(uint32_t), 0);
+            CheckAllocation(d_active[buf], "cc: active list 1");
+        }
 
         if (rounds_ > 4096) {
             std::fprintf(stderr, "cc: warning: round cap reached\n");
