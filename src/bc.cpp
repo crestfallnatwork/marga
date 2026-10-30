@@ -27,6 +27,9 @@ constexpr uint64_t cTaskItems   = 256;
 constexpr uint32_t cBwdThreads  = 128;
 constexpr uint32_t cHubThreads  = 256;
 constexpr uint32_t cPrepThreads = 256;
+// The hub expansion costs a classify and a warp dispatch per level, which a
+// very deep level chain cannot amortise (its levels hold little work).
+constexpr size_t cHubMaxLevels = 512;
 
 void split_grid(uint32_t groups, uint32_t& x, uint32_t& y)
 {
@@ -63,6 +66,15 @@ bool trace_enabled()
     static const bool enabled = std::getenv("MARGA_BC_TRACE") != nullptr;
     return enabled;
 }
+
+// Probe used to price the per-level step dispatch: emits a second step of the
+// same shape into a scratch area, so the difference against the normal run is
+// the cost of one step dispatch plus its barrier. Results are unaffected.
+bool step_probe_enabled()
+{
+    static const bool enabled = std::getenv("MARGA_BC_STEP_PROBE") != nullptr;
+    return enabled;
+}
 } // namespace
 
 BC::BC(Context& ctx, size_t pool_bytes) : ctx(ctx), pool_bytes_(pool_bytes)
@@ -96,6 +108,7 @@ void BC::release()
     drop(ctx, d_grid);
     drop(ctx, d_sources);
     drop(ctx, d_hub);
+    drop(ctx, d_probe);
 }
 
 uint32_t BC::choose_sources(uint64_t num_vertices, size_t pool_bytes)
@@ -154,6 +167,11 @@ void BC::allocate(uint64_t num_vertices, uint32_t sources, uint32_t group)
 
     d_grid = ctx.pool_allocator->allocate(4 * sizeof(uint32_t), 0);
     CheckAllocation(d_grid, "bc: indirect grid");
+
+    if (step_probe_enabled()) {
+        d_probe = ctx.pool_allocator->allocate(128, 0);
+        CheckAllocation(d_probe, "bc: step probe");
+    }
 
     // Indices of the frontier items expanded one warp per item by the hub pass.
     if (hub_threshold_ > 0) {
@@ -361,6 +379,20 @@ uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source
                          ResourceBarrier{&d_grid, Access::Write, Access::IndirectRead},
                          ResourceBarrier{&d_counters, Access::Write, Access::Write}});
 
+            if (step_probe_enabled()) {
+                // Same dispatch shape, pointed at scratch state.
+                uint8_t* scratch = static_cast<uint8_t*>(d_probe.address);
+                step_exec->record(1, 1, 1,
+                                  {
+                                      .level_state     = reinterpret_cast<uint64_t*>(scratch),
+                                      .levels          = reinterpret_cast<uint64_t*>(scratch + 64),
+                                      .counters        = reinterpret_cast<uint32_t*>(scratch + 96),
+                                      .grid            = reinterpret_cast<uint32_t*>(scratch + 112),
+                                      .levels_capacity = 0,
+                                  });
+                ctx.barrier({ResourceBarrier{&d_probe, Access::Write, Access::Read}});
+            }
+
             fwd_exec->record_indirect(
                 d_grid, {
                             .row_offsets    = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
@@ -444,7 +476,7 @@ void BC::backward(Graph const& g, std::vector<uint64_t> const& level_base,
     // The forward pass read the record rows; the backward pass writes them.
     ctx.barrier(d_records, Access::Read, Access::Write);
 
-    const bool hub = hub_threshold_ > 0 && d_hub.buffer;
+    const bool hub = hub_threshold_ > 0 && d_hub.buffer && level_base.size() <= cHubMaxLevels;
     const uint32_t gather_threshold = hub ? hub_threshold_ : 0xFFFFFFFFu;
 
     for (size_t l = level_base.size(); l-- > 1;) {

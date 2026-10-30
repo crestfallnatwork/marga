@@ -34,7 +34,7 @@ int main(int argc, char* argv[])
     uint32_t    num_sources = 0;
     uint32_t    group_size  = 0;
     uint32_t    levels_per_submit = 8;
-    uint32_t    hub_degree    = 64;
+    uint32_t    hub_degree    = 4096;
     std::string backward_mode = "gather";
 
     auto cli = group(

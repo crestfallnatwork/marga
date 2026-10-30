@@ -110,6 +110,7 @@ class BC {
     AllocationInfo d_grid{};
     AllocationInfo d_sources{};
     AllocationInfo d_hub{};
+    AllocationInfo d_probe{};
     AllocationInfo h_counters{};
     AllocationInfo h_state{};
     AllocationInfo h_levels{};
