@@ -381,7 +381,7 @@ uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source
 
             if (step_probe_enabled()) {
                 // Same dispatch shape, pointed at scratch state.
-                uint8_t* scratch = static_cast<uint8_t*>(d_probe.address);
+                auto scratch = reinterpret_cast<uint8_t*>(d_probe.address);
                 step_exec->record(1, 1, 1,
                                   {
                                       .level_state     = reinterpret_cast<uint64_t*>(scratch),
