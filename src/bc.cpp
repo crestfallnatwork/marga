@@ -307,6 +307,11 @@ void BC::backward(Graph const& g, std::vector<uint64_t> const& level_base,
         uint64_t gx     = std::min<uint64_t>(groups, cMaxMeshDim);
         uint64_t gy     = (groups + gx - 1) / gx;
 
+        if (trace_enabled())
+            std::fprintf(stderr, "bc bwd level %zu: items=%llu grid=%llux%llu\n", l,
+                         static_cast<unsigned long long>(count),
+                         static_cast<unsigned long long>(gx), static_cast<unsigned long long>(gy));
+
         bwd_exec->record(static_cast<uint32_t>(gx * cBwdThreads), static_cast<uint32_t>(gy), 1,
                          {
                              .row_offsets    = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
@@ -354,6 +359,10 @@ std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)
         h_delta = ctx.pinned_allocator->allocate(need, 0);
         CheckAllocation(h_delta, std::format("bc: host delta ({:.2f} MiB)", need / 1048576.0));
     }
+
+    if (trace_enabled())
+        std::fprintf(stderr, "bc copy_delta: %u sources x %llu vertices\n", num_sources_,
+                     static_cast<unsigned long long>(count));
 
     ctx.barrier(d_records, Access::Write, Access::TransferRead);
     for (uint32_t s = 0; s < num_sources_; ++s) {
