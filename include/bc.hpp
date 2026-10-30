@@ -54,10 +54,10 @@ class BC {
 
     using FwdExec     = bc_shader::BC_FWDExecutor;
     using FwdIn       = bc_shader::BCFwdIn;
-    using BwdExec     = bc_shader::BwdComputeExecutor;
-    using BwdIn       = bc_shader::BCBwdIn;
-    using PrepareExec = bc_shader::PrepareComputeExecutor;
-    using PrepareIn   = bc_shader::BCPrepareIn;
+    using BwdExec     = bc_shader::BcBwdComputeExecutor;
+    using BwdIn       = bc_shader::BcBwdCompute;
+    using PrepareExec = bc_shader::BcPrepareComputeExecutor;
+    using PrepareIn   = bc_shader::BcPrepareCompute;
 
   private:
     void release();

@@ -32,7 +32,7 @@ int main(int argc, char* argv[])
     bool        sym         = false;
     uint32_t    num_runs    = 1;
     uint32_t    num_sources = 0;
-    uint32_t    group       = 0;
+    uint32_t    group_size  = 0;
 
     auto cli = group(
         value("graph file", graph_file) % "MTX graph file to process",
@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
             "number of times to run the benchmark",
         (option("-k", "--sources") & value("sources", num_sources)) %
             "number of strided sources (default: largest of 64/32/16/8/4 that fits)",
-        (option("-g", "--group") & value("group", group)) %
+        (option("-g", "--group") & value("sources per dispatch", group_size)) %
             "sources sharing one frontier and dispatch (default: all of -k)",
         option("-v", "--validate").set(validate) %
             "validate GPU dependency values against a CPU Brandes reference",
@@ -80,10 +80,10 @@ int main(int argc, char* argv[])
 
     if (num_sources == 0)
         num_sources = pictor::graphs::BC::choose_sources(g.num_vertices, free_mem);
-    if (group == 0)
-        group = num_sources;
+    if (group_size == 0)
+        group_size = num_sources;
     std::cout << std::format("Sources: {} (strided, i * V / k), {} per fused dispatch\n",
-                             num_sources, group);
+                             num_sources, group_size);
 
     pictor::graphs::BC bc(ctx, free_mem);
 
@@ -99,7 +99,7 @@ int main(int argc, char* argv[])
     std::cout << std::format("Running BC {} times...\n", num_runs);
     for (uint32_t run = 0; run < num_runs; ++run) {
         const auto t1 = high_resolution_clock::now();
-        levels        = bc.run(g, num_sources, group);
+        levels        = bc.run(g, num_sources, group_size);
         const auto t2 = high_resolution_clock::now();
 
         const double ms = duration<double, std::milli>(t2 - t1).count();
