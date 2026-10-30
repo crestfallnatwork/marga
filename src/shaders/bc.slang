@@ -26,7 +26,7 @@ static const uint cMaxMeshDim   = 65535;
 static const uint cItemsPerLane = 8;
 static const uint cGroupItems   = WAVE_SIZE * cItemsPerLane;
 static const uint cRecordWords  = 4;
-static const uint cMeshGroup    = 256;
+static const uint cMeshGroup    = 128;
 static const uint cUnvisited    = 0xFFFFFFFFu;
 
 T At<T>(T* ptr, uint64_t offset) {
@@ -128,7 +128,7 @@ void bc_fwd_task(
 }
 
 [shader("mesh")]
-[numthreads(256, 1, 1)]
+[numthreads(128, 1, 1)]
 [outputtopology("point")]
 void bc_fwd_mesh(
     uint lid : SV_GroupIndex,
@@ -350,7 +350,7 @@ void bc_bwdm_task(
 }
 
 [shader("mesh")]
-[numthreads(256, 1, 1)]
+[numthreads(128, 1, 1)]
 [outputtopology("point")]
 void bc_bwdm_mesh(
     uint lid : SV_GroupIndex,
