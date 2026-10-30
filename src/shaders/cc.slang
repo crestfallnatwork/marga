@@ -80,6 +80,9 @@ struct CCIn {
     uint32_t use_active;
     // 1 = symmetric input view: process each undirected edge once (u < v).
     uint32_t cull_upper;
+    // Entries the next list can hold; live pairs beyond it are counted but
+    // not stored, and the host rescans the CSR instead of using the list.
+    uint64_t list_capacity;
 };
 // @bind(cc_task)
 [[vk::push_constant]]
@@ -173,8 +176,10 @@ void cc_task(
         uint begin = ccPayload.offsets[item];
         if (ccPayload.offsets[item + 1] > begin) {
             uint64_t dst = uint64_t(base) + begin;
-            *Splice(ccIn.next_active, dst * 2 + 0) = ccPayload.ru[item];
-            *Splice(ccIn.next_active, dst * 2 + 1) = ccPayload.rv[item];
+            if (dst < ccIn.list_capacity) {
+                *Splice(ccIn.next_active, dst * 2 + 0) = ccPayload.ru[item];
+                *Splice(ccIn.next_active, dst * 2 + 1) = ccPayload.rv[item];
+            }
         }
     }
 

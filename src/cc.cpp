@@ -61,16 +61,28 @@ void CC::prepare(Graph const& g)
     num_vertices_ = g.num_vertices;
     num_edges_    = g.num_edges;
 
-    // parent + the first active pair list (two u32 per entry). The second
-    // list is allocated once the first round has measured the live count, so
-    // its size is the live count rather than the edge count.
-    const uint64_t list_bytes = num_edges_ * 2 * sizeof(uint32_t);
-    d_parent   = ctx.pool_allocator->allocate(num_vertices_ * sizeof(uint32_t), 0);
-    d_active[0] = ctx.pool_allocator->allocate(list_bytes, 0);
+    // parent + the first active pair list (two u32 per entry). The first list
+    // is capped below the edge count so the second list can coexist; the
+    // second is sized by the live count the first round measures. A round
+    // whose live count does not fit its destination list is not stored, and
+    // the host rescans the CSR into the same buffer instead.
+    d_parent    = ctx.pool_allocator->allocate(num_vertices_ * sizeof(uint32_t), 0);
     d_counters  = ctx.pool_allocator->allocate(2 * sizeof(uint32_t), 0);
     CheckAllocation(d_parent, "cc: parent");
-    CheckAllocation(d_active[0], "cc: active list 0");
     CheckAllocation(d_counters, "cc: counters");
+
+    const uint64_t avail = static_cast<uint64_t>(ctx.get_device_free_memory() * 0.95);
+    uint64_t cap = std::min<uint64_t>(num_edges_, (avail * 55 / 100) / (2 * sizeof(uint32_t)));
+    if (cap == 0)
+        cap = 1;
+    for (;;) {
+        d_active[0] = ctx.pool_allocator->allocate(cap * 2 * sizeof(uint32_t), 0);
+        if (d_active[0].res == vk::Result::eSuccess)
+            break;
+        if (cap <= (1ull << 22))
+            CheckAllocation(d_active[0], "cc: active list 0");
+        cap /= 2;
+    }
 
     if (!h_counters.mappedPtr)
         h_counters = ctx.pinned_allocator->allocate(2 * sizeof(uint32_t), 0);
@@ -106,18 +118,23 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
 
     const auto loop_t0 = high_resolution_clock::now();
 
-    AllocationInfo* in  = nullptr;
-    uint32_t        buf = 0;
-    uint64_t active_count = num_edges_;
+    // `scan` means the next round reads the CSR (no list); otherwise it reads
+    // the pair list left by the previous round.
+    bool            scan = true;
+    AllocationInfo* in   = nullptr;
+    AllocationInfo* out  = &d_active[0];
+    uint64_t        active_count = num_edges_;
 
     for (;;) {
         const auto round_t0 = high_resolution_clock::now();
+        const uint64_t items = scan ? num_edges_ : active_count;
+        const uint64_t capacity = out->size / (2 * sizeof(uint32_t));
+
         ctx.fill(d_counters, 0);
         ctx.barrier(d_counters, Access::TransferWrite, Access::Read);
 
-        AllocationInfo* out = &d_active[buf];
-        for (uint64_t offset = 0; offset < active_count; offset += cEdgeBatch) {
-            const uint64_t n      = std::min<uint64_t>(cEdgeBatch, active_count - offset);
+        for (uint64_t offset = 0; offset < items; offset += cEdgeBatch) {
+            const uint64_t n      = std::min<uint64_t>(cEdgeBatch, items - offset);
             const uint32_t groups = static_cast<uint32_t>((n + cTaskEdges - 1) / cTaskEdges);
             uint32_t       gx, gy;
             split_grid(groups, gx, gy);
@@ -133,8 +150,9 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
                                  .num_vertices = num_vertices_,
                                  .edge_start  = offset,
                                  .edge_num    = n,
-                                 .use_active  = in ? 1u : 0u,
+                                 .use_active  = scan ? 0u : 1u,
                                  .cull_upper  = symmetric_view ? 1u : 0u,
+                                 .list_capacity = capacity,
                              });
         }
         // Make this round's parent and active-list writes visible to the
@@ -153,8 +171,10 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
         ++rounds_;
 
         if (std::getenv("MARGA_CC_TRACE"))
-            std::fprintf(stderr, "cc round %u: in=%llu produced=%u wall=%.3f ms\n", rounds_,
-                         static_cast<unsigned long long>(active_count), produced,
+            std::fprintf(stderr, "cc round %u: %s in=%llu produced=%u cap=%llu wall=%.3f ms\n",
+                         rounds_, scan ? "scan" : "list",
+                         static_cast<unsigned long long>(items), produced,
+                         static_cast<unsigned long long>(capacity),
                          std::chrono::duration<double, std::milli>(
                              std::chrono::high_resolution_clock::now() - round_t0)
                              .count());
@@ -163,13 +183,35 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
         if (produced == 0)
             break;
 
-        active_count = produced;
-        in           = out;
-        buf         ^= 1u;
-        if (!d_active[buf].buffer) {
-            d_active[buf] = ctx.pool_allocator->allocate(active_count * 2 * sizeof(uint32_t), 0);
-            CheckAllocation(d_active[buf], "cc: active list 1");
+        // The list just written is usable only if it fits; otherwise fall back
+        // to a full CSR scan, reusing the same buffer.
+        if (produced > capacity) {
+            scan         = true;
+            in           = nullptr;
+            active_count = num_edges_;
+            continue;
         }
+
+        AllocationInfo* nxt  = (out == &d_active[0]) ? &d_active[1] : &d_active[0];
+        const uint64_t  need = static_cast<uint64_t>(produced) * 2 * sizeof(uint32_t);
+        if (!nxt->buffer || nxt->size < need) {
+            if (nxt->buffer)
+                ctx.deallocate(*nxt);
+            AllocationInfo next = ctx.pool_allocator->allocate(need, 0);
+            if (next.res != vk::Result::eSuccess) {
+                // No room for a second list: rescan the CSR into `out`.
+                scan         = true;
+                in           = nullptr;
+                active_count = num_edges_;
+                continue;
+            }
+            *nxt = next;
+        }
+
+        in           = out;
+        out          = nxt;
+        scan         = false;
+        active_count = produced;
 
         if (rounds_ > 4096) {
             std::fprintf(stderr, "cc: warning: round cap reached\n");
