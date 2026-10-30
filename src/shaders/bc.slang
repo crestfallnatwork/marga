@@ -36,14 +36,14 @@ T* Splice<T>(T* ptr, uint64_t offset) {
     return (T*)(uint64_t(ptr) + sizeof(T) * offset);
 }
 
+// The payload is copied once per mesh workgroup, so it holds only what the
+// mesh stage cannot re-derive cheaply: the item's sigma (a random read of its
+// own record) and the edge prefix offsets. The frontier entry and the item's
+// first edge are re-read from global, where a mesh group's 128 consecutive
+// edges hit one or two sectors of each.
 struct SharedBCFwdPayload {
-    // Word offset of the (source, *) record row, first edge of the item, source
-    // index and the item's sigma, plus the per-group edge prefix offsets.
-    uint64_t row_base[cGroupItems];
-    uint32_t edge_start[cGroupItems];
-    uint32_t source[cGroupItems];
-    float    sigma[cGroupItems];
-    uint     offsets[cGroupItems + 1];
+    float sigma[cGroupItems];
+    uint  offsets[cGroupItems + 1];
 };
 groupshared SharedBCFwdPayload bcFwdPayload;
 
@@ -84,27 +84,20 @@ void bc_fwd_task(
         uint item = i * WAVE_SIZE + lid;
         uint64_t local = group_base + item;
 
-        uint     source = 0;
-        uint     start  = 0;
-        uint     degree = 0;
-        uint64_t row    = 0;
-        float    sigma  = 0.0f;
+        uint  degree = 0;
+        float sigma  = 0.0f;
 
         if (local < count) {
             uint64_t entry = At(bcFwdIn.frontier, base + local);
-            source = uint(entry >> 32);
-            uint u = uint(entry & 0xFFFFFFFFu);
-            uint64_t first = At(bcFwdIn.row_offsets, u);
-            start  = uint(first);
+            uint     source = uint(entry >> 32);
+            uint     u      = uint(entry & 0xFFFFFFFFu);
+            uint64_t first  = At(bcFwdIn.row_offsets, u);
             degree = uint(At(bcFwdIn.row_offsets, uint64_t(u) + 1) - first);
-            row    = uint64_t(source) * bcFwdIn.num_vertices * cRecordWords;
-            sigma  = At(bcFwdIn.records_f, row + uint64_t(u) * cRecordWords + 1);
+            uint64_t row = uint64_t(source) * bcFwdIn.num_vertices * cRecordWords;
+            sigma = At(bcFwdIn.records_f, row + uint64_t(u) * cRecordWords + 1);
         }
 
-        bcFwdPayload.row_base[item]   = row;
-        bcFwdPayload.edge_start[item] = start;
-        bcFwdPayload.source[item]     = source;
-        bcFwdPayload.sigma[item]      = sigma;
+        bcFwdPayload.sigma[item] = sigma;
 
         uint prefix = WavePrefixSum(degree);
         uint total  = WaveActiveSum(degree);
@@ -152,9 +145,15 @@ void bc_fwd_mesh(
         }
     }
 
-    uint64_t eid = uint64_t(inPayload.edge_start[item]) + (edge - inPayload.offsets[item]);
-    uint w       = At(bcFwdIn.column_indices, eid);
-    uint64_t row = inPayload.row_base[item] + uint64_t(w) * cRecordWords;
+    // Re-derive the item's vertex, row and first edge from global memory; the
+    // group's 128 consecutive edges touch one or two sectors of each.
+    uint64_t entry  = At(bcFwdIn.frontier, At(bcFwdIn.level_state, 0) + item);
+    uint     source = uint(entry >> 32);
+    uint     u      = uint(entry & 0xFFFFFFFFu);
+    uint64_t row    = uint64_t(source) * bcFwdIn.num_vertices * cRecordWords;
+    uint64_t eid    = At(bcFwdIn.row_offsets, u) + (edge - inPayload.offsets[item]);
+    uint     w      = At(bcFwdIn.column_indices, eid);
+    row += uint64_t(w) * cRecordWords;
 
     uint next_level = bcFwdIn.level + 1u;
     uint claimed    = 0;
@@ -191,8 +190,7 @@ void bc_fwd_mesh(
     if (claimed != 0) {
         uint64_t slot = At(bcFwdIn.level_state, 2) + uint64_t(reserved) + uint64_t(wave_offset);
         if (slot < At(bcFwdIn.level_state, 4)) {
-            *Splice(bcFwdIn.frontier, slot) =
-                (uint64_t(inPayload.source[item]) << 32) | uint64_t(w);
+            *Splice(bcFwdIn.frontier, slot) = (uint64_t(source) << 32) | uint64_t(w);
         }
     }
 
