@@ -122,7 +122,7 @@ void bc_fwd_task(
 }
 
 [shader("mesh")]
-[numthreads(cMeshGroup, 1, 1)]
+[numthreads(128, 1, 1)]
 [outputtopology("point")]
 void bc_fwd_mesh(
     uint lid : SV_GroupIndex,
@@ -176,8 +176,8 @@ void bc_fwd_mesh(
         InterlockedAdd(*Splice(bcFwdIn.records_f, row + 1), inPayload.sigma[item]);
     }
 
-    uint wave_claims = WaveActiveCountBits(claimed);
-    uint wave_offset = WavePrefixCountBits(claimed);
+    uint wave_claims = WaveActiveCountBits(claimed != 0u);
+    uint wave_offset = WavePrefixCountBits(claimed != 0u);
     uint base        = 0;
     if (WaveIsFirstLane() && wave_claims > 0) {
         InterlockedAdd(*Splice(bcFwdIn.counters, 0), wave_claims, base);
@@ -209,7 +209,7 @@ struct BCBwdIn {
 uniform BCBwdIn bcBwdIn;
 
 [shader("compute")]
-[numthreads(cMeshGroup, 1, 1)]
+[numthreads(128, 1, 1)]
 void bc_bwd_compute(uint3 tid : SV_DispatchThreadID) {
     uint64_t item = uint64_t(tid.y) * bcBwdIn.stride + tid.x;
     if (item >= bcBwdIn.frontier_count) {
