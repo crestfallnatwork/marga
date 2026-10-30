@@ -57,7 +57,7 @@ class BC {
     using FwdExec     = bc_shader::BC_FWDExecutor;
     using FwdIn       = bc_shader::BCFwdIn;
     using BwdExec     = bc_shader::BcBwdComputeExecutor;
-    using BwdMeshExec = bc_shader::BC_BDWMExecutor;
+    using BwdMeshExec = bc_shader::BC_BWDMExecutor;
     using BwdIn       = bc_shader::BcBwdCompute;
     using StepExec    = bc_shader::BcStepComputeExecutor;
     using StepIn      = bc_shader::BCStepIn;
