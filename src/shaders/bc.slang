@@ -204,7 +204,7 @@ struct BCBwdIn {
     uint64_t stride;
     uint32_t level;
 };
-// @bind(bc_bwd)
+// @bind(bc_bwd_compute)
 [[vk::push_constant]]
 uniform BCBwdIn bcBwdIn;
 
@@ -247,7 +247,7 @@ struct BCPrepareIn {
     uint64_t  stride;
     uint64_t  num_sources;
 };
-// @bind(bc_prepare)
+// @bind(bc_prepare_compute)
 [[vk::push_constant]]
 uniform BCPrepareIn bcPrepareIn;
 
