@@ -167,9 +167,9 @@ int main(int argc, char* argv[])
                 duration<double, std::milli>(high_resolution_clock::now() - val_t0).count();
             std::cout << std::format(
                 "  source {:>3} (v {}): checked {} - max_rel {:.3e}, max_abs {:.3e}, "
-                "over tol {}, sum gpu {:.6f} / cpu {:.6f} ({:.0f} ms)\n",
+                "over tol {}, sum gpu {:.6f} / cpu {:.6f}, sigma max {:.3e} ({:.0f} ms)\n",
                 s, sources[s], cmp.checked, cmp.max_rel, cmp.max_abs, cmp.exceeding, cmp.sum_gpu,
-                cmp.sum_cpu, val_ms);
+                cmp.sum_cpu, validator.sigma_max(), val_ms);
             checked += cmp.checked;
             max_rel = std::max(max_rel, cmp.max_rel);
             ok      = ok && (cmp.exceeding == 0);

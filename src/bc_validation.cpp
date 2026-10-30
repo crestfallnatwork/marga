@@ -30,6 +30,7 @@ const std::vector<double>& BCValidator::delta(uint32_t source)
     std::fill(sigma_.begin(), sigma_.end(), 0.0);
     std::fill(dist_.begin(), dist_.end(), -1);
     order_.clear();
+    sigma_max_ = 0.0;
 
     // Forward: level-synchronous BFS with path counting.
     sigma_[source] = 1.0;
@@ -45,8 +46,10 @@ const std::vector<double>& BCValidator::delta(uint32_t source)
                 dist_[w] = dist_[u] + 1;
                 order_.push_back(w);
             }
-            if (dist_[w] == dist_[u] + 1)
+            if (dist_[w] == dist_[u] + 1) {
                 sigma_[w] += su;
+                sigma_max_ = std::max(sigma_max_, sigma_[w]);
+            }
         }
     }
 

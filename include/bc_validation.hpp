@@ -29,6 +29,10 @@ class BCValidator {
     // Raw dependencies of every vertex for `source` (length = vertices).
     const std::vector<double>& delta(uint32_t source);
 
+    // Largest path count seen by the last delta() call (a float sigma
+    // overflows above ~3.4e38).
+    double sigma_max() const { return sigma_max_; }
+
     uint64_t vertices() const { return num_vertices_; }
     uint64_t edges() const { return column_indices_.size(); }
 
@@ -46,6 +50,7 @@ class BCValidator {
     std::vector<double> sigma_;
     std::vector<int64_t> dist_;
     std::vector<uint32_t> order_;
+    double               sigma_max_ = 0.0;
 };
 
 } // namespace graphs
