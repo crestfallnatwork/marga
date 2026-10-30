@@ -74,6 +74,7 @@ BC::BC(Context& ctx, size_t pool_bytes) : ctx(ctx), pool_bytes_(pool_bytes)
 BC::~BC()
 {
     release();
+    drop(ctx, h_counters);
     drop(ctx, h_state);
     drop(ctx, h_levels);
     drop(ctx, h_delta);
@@ -119,6 +120,9 @@ void BC::allocate(uint64_t num_vertices, uint32_t sources, uint32_t group)
 
     d_counters = ctx.pool_allocator->allocate(2 * sizeof(uint32_t), 0);
     CheckAllocation(d_counters, "bc: counters");
+    if (!h_counters.mappedPtr)
+        h_counters = ctx.pinned_allocator->allocate(2 * sizeof(uint32_t), 0);
+    CheckAllocation(h_counters, "bc: host counters");
 
     // [0] frontier base, [1] frontier count, [2] next base, [3] levels
     // recorded, [4] frontier capacity.
@@ -324,15 +328,21 @@ uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source
         }
 
         ctx.barrier({ResourceBarrier{&d_level_state, Access::Write, Access::TransferRead},
-                     ResourceBarrier{&d_level_state, Access::Read, Access::TransferRead}});
+                     ResourceBarrier{&d_level_state, Access::Read, Access::TransferRead},
+                     ResourceBarrier{&d_counters, Access::Write, Access::TransferRead}});
         ctx.copy(view(d_level_state, 0, 4 * sizeof(uint64_t)), view(h_state, 0, 4 * sizeof(uint64_t)));
+        ctx.copy(view(d_counters, 0, sizeof(uint32_t)), view(h_counters, 0, sizeof(uint32_t)));
         ctx.fsync();
         ctx.invalidate(h_state);
-        ctx.barrier(d_level_state, Access::TransferRead, Access::Read);
+        ctx.invalidate(h_counters);
+        ctx.barrier({ResourceBarrier{&d_level_state, Access::TransferRead, Access::Read},
+                     ResourceBarrier{&d_counters, Access::TransferRead, Access::Read}});
 
         const uint64_t* st = reinterpret_cast<const uint64_t*>(h_state.mappedPtr);
-        base     = st[0];
-        count    = st[1];
+        // state[2] is the base of the level the next step will prepare, and
+        // counters[0] holds that level's item count (the last level's claims).
+        base     = st[2];
+        count    = *reinterpret_cast<const uint32_t*>(h_counters.mappedPtr);
         recorded = st[3];
         frontier_peak_ = std::max(frontier_peak_, st[2]);
 

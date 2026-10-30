@@ -89,6 +89,7 @@ class BC {
     AllocationInfo d_level_state{};
     AllocationInfo d_levels{};
     AllocationInfo d_grid{};
+    AllocationInfo h_counters{};
     AllocationInfo h_state{};
     AllocationInfo h_levels{};
     AllocationInfo h_delta{};
