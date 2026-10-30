@@ -42,8 +42,11 @@ T* Splice<T>(T* ptr, uint64_t offset) {
 // first edge are re-read from global, where a mesh group's 128 consecutive
 // edges hit one or two sectors of each.
 struct SharedBCFwdPayload {
-    float sigma[cGroupItems];
-    uint  offsets[cGroupItems + 1];
+    // Frontier index of this group's first item; the mesh stage's own group id
+    // restarts with every DispatchMesh.
+    uint64_t base;
+    float    sigma[cGroupItems];
+    uint     offsets[cGroupItems + 1];
 };
 groupshared SharedBCFwdPayload bcFwdPayload;
 
@@ -77,6 +80,10 @@ void bc_fwd_task(
 
     uint64_t base  = At(bcFwdIn.level_state, 0);
     uint64_t count = At(bcFwdIn.level_state, 1);
+
+    if (lid == 0) {
+        bcFwdPayload.base = base + group_base;
+    }
 
     uint running = 0;
     [unroll]
@@ -147,7 +154,7 @@ void bc_fwd_mesh(
 
     // Re-derive the item's vertex, row and first edge from global memory; the
     // group's 128 consecutive edges touch one or two sectors of each.
-    uint64_t entry  = At(bcFwdIn.frontier, At(bcFwdIn.level_state, 0) + item);
+    uint64_t entry  = At(bcFwdIn.frontier, inPayload.base + uint64_t(item));
     uint     source = uint(entry >> 32);
     uint     u      = uint(entry & 0xFFFFFFFFu);
     uint64_t row    = uint64_t(source) * bcFwdIn.num_vertices * cRecordWords;
