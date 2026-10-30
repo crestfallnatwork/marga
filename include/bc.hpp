@@ -29,13 +29,13 @@ class BC {
 
     // Samples `sources` strided sources (i * V / sources). `group` sources
     // share one frontier and one dispatch per level; all sources are processed
-    // either way. `levels_per_submit` forward levels run per host submission
+    // either way. A group of 0 picks a group size from the record set size. `levels_per_submit` forward levels run per host submission
     // (1 = one fence wait per level). `hub_degree` expands dependency items of
     // that out-degree or more over one warp each (0: one thread per item).
     // Returns the levels of the deepest group.
     uint32_t run(Graph const& g, uint32_t sources, uint32_t group,
                  uint32_t levels_per_submit = 8, bool scatter_backward = false,
-                 uint32_t hub_degree = 64);
+                 uint32_t hub_degree = 4096);
 
     // Largest source count in {4, 8, 16, 32, 64} whose records and frontier
     // fit in 60% of `pool_bytes`.

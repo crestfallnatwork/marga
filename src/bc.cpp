@@ -286,7 +286,22 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
             live_sources_.push_back(v);
     }
     rows_ = static_cast<uint32_t>(live_sources_.size());
-    group_ = std::max<uint32_t>(1, std::min<uint32_t>(group, std::max<uint32_t>(rows_, 1u)));
+    // Group size: how many sources share one frontier and one pass over their
+    // records. A group's record rows are the working set its level reads
+    // successors from, so a group whose rows are not far larger than the cache
+    // reuses them across a level's edges; that is worth more than the extra
+    // level dispatches it costs. Past that point the reads miss at any group
+    // size, so all sources are fused and the dispatches are minimised.
+    constexpr uint64_t cGroupRowBytes = 96ull << 20;
+    if (group == 0) {
+        const uint64_t row_bytes = num_vertices_ * cRecordBytes;
+        const uint64_t g = row_bytes >= cGroupRowBytes
+                               ? rows_
+                               : std::max<uint64_t>(1, cGroupRowBytes / row_bytes);
+        group_ = static_cast<uint32_t>(std::max<uint64_t>(1, std::min<uint64_t>(g, rows_)));
+    } else {
+        group_ = std::max<uint32_t>(1, std::min<uint32_t>(group, std::max<uint32_t>(rows_, 1u)));
+    }
     levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
     scatter_backward_  = scatter_backward;
     // The hub path pays a classify and a warp dispatch per level, so it is only

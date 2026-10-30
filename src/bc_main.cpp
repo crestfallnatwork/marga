@@ -44,7 +44,7 @@ int main(int argc, char* argv[])
         (option("-k", "--sources") & value("sources", num_sources)) %
             "number of strided sources (default: largest of 64/32/16/8/4 that fits)",
         (option("-g", "--group") & value("sources per dispatch", group_size)) %
-            "sources sharing one frontier and dispatch (default: all of -k)",
+            "sources sharing one frontier and dispatch (default: from the record set size)",
         (option("-b", "--batch") & value("levels per submit", levels_per_submit)) %
             "forward levels per host submission (1 = one fence wait per level)",
         (option("-B", "--backward") & value("gather|scatter", backward_mode)) %
@@ -89,10 +89,9 @@ int main(int argc, char* argv[])
 
     if (num_sources == 0)
         num_sources = pictor::graphs::BC::choose_sources(g.num_vertices, free_mem);
-    if (group_size == 0)
-        group_size = num_sources;
     std::cout << std::format("Sources: {} (strided, i * V / k), {} per fused dispatch\n",
-                             num_sources, group_size);
+                             num_sources,
+                             group_size ? std::to_string(group_size) : std::string("auto"));
 
     pictor::graphs::BC bc(ctx, free_mem);
 
