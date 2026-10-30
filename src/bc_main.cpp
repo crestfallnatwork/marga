@@ -34,7 +34,7 @@ int main(int argc, char* argv[])
     uint32_t    num_sources = 0;
     uint32_t    group_size  = 0;
     uint32_t    levels_per_submit = 8;
-    uint32_t    hub_degree    = 4096;
+    uint32_t    hub_degree    = 0;
     std::string backward_mode = "gather";
 
     auto cli = group(
@@ -50,7 +50,8 @@ int main(int argc, char* argv[])
         (option("-B", "--backward") & value("gather|scatter", backward_mode)) %
             "dependency pass: per-item gather or per-edge atomic scatter",
         (option("-H", "--hub") & value("degree", hub_degree)) %
-            "out-degree at which a dependency item is expanded over one warp (0: never)",
+            "out-degree at which a dependency item is expanded over one warp "
+            "(0: from the group's record size)",
         option("-v", "--validate").set(validate) %
             "validate GPU dependency values against a CPU Brandes reference",
         option("-s", "--sym").set(sym) %

@@ -31,6 +31,11 @@ constexpr uint32_t cPrepThreads = 256;
 // The hub expansion costs a classify and a warp dispatch per level, which a
 // very deep level chain cannot amortise (its levels hold little work).
 constexpr size_t cHubMaxLevels = 512;
+// Out-degree at which a dependency item is expanded over one warp: a warp's
+// worth of edges when the group's records are cache resident, extreme outliers
+// only when they are not.
+constexpr uint32_t cHubDegreeCached    = 64;
+constexpr uint32_t cHubDegreeStreaming = 4096;
 
 void split_grid(uint32_t groups, uint32_t& x, uint32_t& y)
 {
@@ -304,10 +309,21 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
     }
     levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
     scatter_backward_  = scatter_backward;
-    // The hub path pays a classify and a warp dispatch per level, so it is only
-    // worth enabling on graphs with enough arcs per vertex to hold hubs.
-    hub_threshold_ =
-        (hub_degree > 0 && g.num_edges >= 8 * num_vertices_) ? hub_degree : 0u;
+    // Hub threshold. When a group's records fit the cache the dependency pass
+    // is bound by the adjacency stream, and striding a long row over a warp
+    // reads it coalesced instead of one sector per lane, so rows longer than a
+    // warp are expanded. When they do not fit, the successor records dominate
+    // and only the extreme outliers are worth expanding, since packing 32 items
+    // per warp is otherwise the cheaper form. 0 selects this rule.
+    hub_threshold_ = 0;
+    if (rows_ > 0 && g.num_edges >= 8 * num_vertices_) {
+        if (hub_degree != 0) {
+            hub_threshold_ = hub_degree;
+        } else {
+            const bool cached = group_ * num_vertices_ * cRecordBytes <= 2 * cGroupRowBytes;
+            hub_threshold_   = cached ? cHubDegreeCached : cHubDegreeStreaming;
+        }
+    }
 
     const auto init_t0 = high_resolution_clock::now();
     if (rows_ == 0) {
