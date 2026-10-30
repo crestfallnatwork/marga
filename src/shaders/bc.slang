@@ -159,14 +159,18 @@ void bc_fwd_mesh(
     uint next_level = bcFwdIn.level + 1u;
     uint claimed    = 0;
 
-    // Every edge claims unconditionally: the atomic both elects the single
-    // appender and returns the distance already set.
-    uint previous = 0;
-    InterlockedCompareExchange(*Splice(bcFwdIn.records_u, row), cUnvisited, next_level, previous);
-    uint distance = previous;
-    if (previous == cUnvisited) {
-        claimed  = 1;
-        distance = next_level;
+    // Fast path: only edges that reach a still-unvisited vertex pay the claim
+    // atomic.
+    uint distance = At(bcFwdIn.records_u, row);
+    if (distance == cUnvisited) {
+        uint previous = 0;
+        InterlockedCompareExchange(*Splice(bcFwdIn.records_u, row), cUnvisited, next_level, previous);
+        if (previous == cUnvisited) {
+            claimed  = 1;
+            distance = next_level;
+        } else {
+            distance = previous;
+        }
     }
 
     // Every edge landing on the next level contributes paths, not only the
@@ -252,8 +256,119 @@ struct BCBwdIn {
     uint32_t level;
 };
 // @bind(bc_bwd_compute)
+// @bind(bc_bwdm_task)
 [[vk::push_constant]]
 uniform BCBwdIn bcBwdIn;
+
+// Scatter form of the dependency pass: the task stage stages the target delta
+// slot of every item, the mesh stage adds one contribution per out-edge that
+// lands on the next level. Used for the gather/scatter comparison.
+struct SharedBCBwdPayload {
+    uint64_t delta_word[cGroupItems];
+    uint64_t row_base[cGroupItems];
+    uint32_t edge_start[cGroupItems];
+    float    sigma[cGroupItems];
+    uint     offsets[cGroupItems + 1];
+};
+groupshared SharedBCBwdPayload bcBwdPayload;
+
+[shader("amplification")]
+[numthreads(WAVE_SIZE, 1, 1)]
+void bc_bwdm_task(
+    uint3 gid : SV_GroupID,
+    uint lid : SV_GroupIndex
+) {
+    uint g = (gid.y * cMaxMeshDim) + gid.x;
+    uint64_t group_base = uint64_t(g) * cGroupItems;
+
+    uint running = 0;
+    [unroll]
+    for (uint i = 0; i < cItemsPerLane; ++i) {
+        uint item = i * WAVE_SIZE + lid;
+        uint64_t local = group_base + item;
+
+        uint     start  = 0;
+        uint     degree = 0;
+        uint64_t row    = 0;
+        uint64_t delta  = 0;
+        float    sigma  = 0.0f;
+
+        if (local < bcBwdIn.frontier_count) {
+            uint64_t entry = At(bcBwdIn.frontier, bcBwdIn.frontier_base + local);
+            uint     source = uint(entry >> 32);
+            uint     u      = uint(entry & 0xFFFFFFFFu);
+            uint64_t first  = At(bcBwdIn.row_offsets, u);
+            start  = uint(first);
+            degree = uint(At(bcBwdIn.row_offsets, uint64_t(u) + 1) - first);
+            row    = uint64_t(source) * bcBwdIn.num_vertices * cRecordWords;
+            delta  = row + uint64_t(u) * cRecordWords + 2;
+            sigma  = At(bcBwdIn.records_f, row + uint64_t(u) * cRecordWords + 1);
+        }
+
+        bcBwdPayload.delta_word[item] = delta;
+        bcBwdPayload.row_base[item]   = row;
+        bcBwdPayload.edge_start[item] = start;
+        bcBwdPayload.sigma[item]      = sigma;
+
+        uint prefix = WavePrefixSum(degree);
+        uint total  = WaveActiveSum(degree);
+        bcBwdPayload.offsets[item] = running + prefix;
+        running += total;
+    }
+
+    if (lid == WAVE_SIZE - 1) {
+        bcBwdPayload.offsets[cGroupItems] = running;
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    uint mesh_count = (running + cMeshGroup - 1) / cMeshGroup;
+    uint mesh_x     = min(mesh_count, cMaxMeshDim);
+    uint mesh_y     = mesh_count > cMaxMeshDim ? ((mesh_count + cMaxMeshDim - 1) / cMaxMeshDim) : 1;
+
+    DispatchMesh(mesh_x, mesh_y, 1, bcBwdPayload);
+}
+
+[shader("mesh")]
+[numthreads(128, 1, 1)]
+[outputtopology("point")]
+void bc_bwdm_mesh(
+    uint lid : SV_GroupIndex,
+    uint3 gid : SV_GroupID,
+    in payload SharedBCBwdPayload inPayload,
+    out vertices float4 vertices[1],
+    out indices uint indices[1]
+) {
+    uint g     = (gid.y * cMaxMeshDim) + gid.x;
+    uint edge  = g * cMeshGroup + lid;
+    uint total = inPayload.offsets[cGroupItems];
+    if (edge >= total) {
+        SetMeshOutputCounts(0, 0);
+        return;
+    }
+
+    uint item = 0;
+    [unroll]
+    for (uint step = (cGroupItems >> 1); step > 0; step >>= 1) {
+        if (inPayload.offsets[item + step] <= edge) {
+            item += step;
+        }
+    }
+
+    uint64_t eid  = uint64_t(inPayload.edge_start[item]) + (edge - inPayload.offsets[item]);
+    uint     w    = At(bcBwdIn.column_indices, eid);
+    uint64_t slot = inPayload.row_base[item] + uint64_t(w) * cRecordWords;
+
+    // Delta of the successor is final: it sits one level deeper and was
+    // processed by the previous dispatch of the reverse sweep.
+    if (At(bcBwdIn.records_u, slot) == bcBwdIn.level + 1u) {
+        float contribution = inPayload.sigma[item] / At(bcBwdIn.records_f, slot + 1) *
+                             (1.0f + At(bcBwdIn.records_f, slot + 2));
+        InterlockedAdd(*Splice(bcBwdIn.records_f, inPayload.delta_word[item]), contribution);
+    }
+
+    SetMeshOutputCounts(0, 0);
+}
 
 [shader("compute")]
 [numthreads(128, 1, 1)]

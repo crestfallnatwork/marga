@@ -21,6 +21,8 @@ namespace pictor {
 namespace graphs {
 
 namespace {
+// Must match cItemsPerLane * WAVE_SIZE in bc.slang.
+constexpr uint64_t cTaskItems   = 256;
 constexpr uint32_t cBwdThreads  = 128;
 constexpr uint32_t cPrepThreads = 256;
 
@@ -65,6 +67,7 @@ BC::BC(Context& ctx, size_t pool_bytes) : ctx(ctx), pool_bytes_(pool_bytes)
 {
     fwd_exec.reset(FwdExec::create(ctx).val().release());
     bwd_exec.reset(BwdExec::create(ctx).val().release());
+    bwdm_exec.reset(BwdMeshExec::create(ctx).val().release());
     step_exec.reset(StepExec::create(ctx).val().release());
     prepare_exec.reset(PrepareExec::create(ctx).val().release());
 }
@@ -186,7 +189,8 @@ void BC::seed_frontier(uint32_t first_source, uint32_t last_source)
     ctx.barrier(d_frontier, Access::TransferWrite, Access::Read);
 }
 
-uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t levels_per_submit)
+uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t levels_per_submit,
+                 bool scatter_backward)
 {
     using namespace std::chrono;
 
@@ -202,6 +206,7 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
     num_sources_ = std::max<uint32_t>(1, std::min<uint32_t>(sources, num_vertices_));
     group_       = std::max<uint32_t>(1, std::min<uint32_t>(group, num_sources_));
     levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
+    scatter_backward_  = scatter_backward;
 
     const auto init_t0 = high_resolution_clock::now();
     allocate(num_vertices_, num_sources_, group_);
@@ -215,7 +220,10 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
         std::vector<uint64_t> level_count;
 
         levels_ = std::max(levels_, forward(g, s0, s1, level_base, level_count));
-        backward(g, level_base, level_count);
+        if (scatter_backward_)
+            backward_scatter(g, level_base, level_count);
+        else
+            backward(g, level_base, level_count);
     }
 
     ctx.fsync();
@@ -414,6 +422,44 @@ void BC::backward(Graph const& g, std::vector<uint64_t> const& level_base,
                              .level          = static_cast<uint32_t>(l),
                          });
         // This level's delta is read by the level below.
+        ctx.barrier(d_records, Access::Write, Access::Read);
+    }
+
+    ctx.fsync();
+    backward_ms_ += duration<double, std::milli>(high_resolution_clock::now() - bwd_t0).count();
+}
+
+void BC::backward_scatter(Graph const& g, std::vector<uint64_t> const& level_base,
+                          std::vector<uint64_t> const& level_count)
+{
+    using namespace std::chrono;
+
+    const auto bwd_t0 = high_resolution_clock::now();
+    ctx.barrier(d_records, Access::Read, Access::Write);
+
+    for (size_t l = level_base.size(); l-- > 1;) {
+        const uint64_t base  = level_base[l];
+        const uint64_t count = level_count[l];
+        if (count == 0)
+            continue;
+
+        const uint32_t groups = static_cast<uint32_t>((count + cTaskItems - 1) / cTaskItems);
+        uint32_t       gx, gy;
+        split_grid(groups, gx, gy);
+
+        bwdm_exec->record_raw(gx, gy, 1,
+                              {
+                                  .row_offsets    = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
+                                  .column_indices = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
+                                  .records_u      = reinterpret_cast<uint32_t*>(d_records.address),
+                                  .records_f      = reinterpret_cast<float*>(d_records.address),
+                                  .frontier       = reinterpret_cast<uint64_t*>(d_frontier.address),
+                                  .frontier_base  = base,
+                                  .frontier_count = count,
+                                  .num_vertices   = num_vertices_,
+                                  .stride         = 0,
+                                  .level          = static_cast<uint32_t>(l),
+                              });
         ctx.barrier(d_records, Access::Write, Access::Read);
     }
 

@@ -32,7 +32,7 @@ class BC {
     // either way. `levels_per_submit` forward levels run per host submission
     // (1 = one fence wait per level). Returns the levels of the deepest group.
     uint32_t run(Graph const& g, uint32_t sources, uint32_t group,
-                 uint32_t levels_per_submit = 8);
+                 uint32_t levels_per_submit = 8, bool scatter_backward = false);
 
     // Largest source count in {4, 8, 16, 32, 64} whose records and frontier
     // fit in 60% of `pool_bytes`.
@@ -57,6 +57,7 @@ class BC {
     using FwdExec     = bc_shader::BC_FWDExecutor;
     using FwdIn       = bc_shader::BCFwdIn;
     using BwdExec     = bc_shader::BcBwdComputeExecutor;
+    using BwdMeshExec = bc_shader::BC_BDWMExecutor;
     using BwdIn       = bc_shader::BcBwdCompute;
     using StepExec    = bc_shader::BcStepComputeExecutor;
     using StepIn      = bc_shader::BCStepIn;
@@ -74,12 +75,15 @@ class BC {
                          std::vector<uint64_t>& level_count);
     void     backward(Graph const& g, std::vector<uint64_t> const& level_base,
                       std::vector<uint64_t> const& level_count);
+    void     backward_scatter(Graph const& g, std::vector<uint64_t> const& level_base,
+                              std::vector<uint64_t> const& level_count);
 
     Context& ctx;
     size_t   pool_bytes_ = 0;
 
     std::unique_ptr<FwdExec>     fwd_exec;
     std::unique_ptr<BwdExec>     bwd_exec;
+    std::unique_ptr<BwdMeshExec> bwdm_exec;
     std::unique_ptr<StepExec>    step_exec;
     std::unique_ptr<PrepareExec> prepare_exec;
 
@@ -102,6 +106,7 @@ class BC {
     uint32_t levels_         = 0;
     uint32_t levels_per_submit_ = 8;
     uint64_t levels_capacity_   = 0;
+    bool     scatter_backward_  = false;
     double   init_ms_        = 0.0;
     double   forward_ms_     = 0.0;
     double   backward_ms_    = 0.0;
