@@ -21,8 +21,6 @@ namespace pictor {
 namespace graphs {
 
 namespace {
-// Must match cItemsPerLane * WAVE_SIZE in bc.slang.
-constexpr uint64_t cTaskItems   = 256;
 constexpr uint32_t cBwdThreads  = 128;
 constexpr uint32_t cPrepThreads = 256;
 
