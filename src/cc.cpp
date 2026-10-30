@@ -20,7 +20,8 @@ namespace pictor {
 namespace graphs {
 
 namespace {
-constexpr uint64_t cTaskEdges = 32;
+// Must match cEdgesPerLane * WAVE_SIZE in cc.slang.
+constexpr uint64_t cTaskEdges = 256;
 
 void split_grid(uint32_t groups, uint32_t& x, uint32_t& y)
 {
@@ -50,7 +51,6 @@ CC::~CC()
 void CC::release()
 {
     ctx.deallocate(d_parent);
-    ctx.deallocate(d_edge_src);
     ctx.deallocate(d_active[0]);
     ctx.deallocate(d_active[1]);
     ctx.deallocate(d_counters);
@@ -61,14 +61,13 @@ void CC::prepare(Graph const& g)
     num_vertices_ = g.num_vertices;
     num_edges_    = g.num_edges;
 
-    // parent + per-edge source + two ping-pong active lists (edge ids).
+    // parent + two ping-pong active pair lists (two u32 per entry).
+    const uint64_t list_bytes = num_edges_ * 2 * sizeof(uint32_t);
     d_parent   = ctx.pool_allocator->allocate(num_vertices_ * sizeof(uint32_t), 0);
-    d_edge_src = ctx.pool_allocator->allocate(num_edges_ * sizeof(uint32_t), 0);
-    d_active[0] = ctx.pool_allocator->allocate(num_edges_ * sizeof(uint32_t), 0);
-    d_active[1] = ctx.pool_allocator->allocate(num_edges_ * sizeof(uint32_t), 0);
+    d_active[0] = ctx.pool_allocator->allocate(list_bytes, 0);
+    d_active[1] = ctx.pool_allocator->allocate(list_bytes, 0);
     d_counters  = ctx.pool_allocator->allocate(2 * sizeof(uint32_t), 0);
     CheckAllocation(d_parent, "cc: parent");
-    CheckAllocation(d_edge_src, "cc: edge_src");
     CheckAllocation(d_active[0], "cc: active list 0");
     CheckAllocation(d_active[1], "cc: active list 1");
     CheckAllocation(d_counters, "cc: counters");
@@ -78,25 +77,19 @@ void CC::prepare(Graph const& g)
 
     ctx.fill(d_counters, 0);
 
-    // Two linear passes over the vertex range: parent identity, then edge_src.
+    // Parent identity.
     const uint64_t groups = (num_vertices_ + 255) / 256;
     uint32_t       gx     = static_cast<uint32_t>(std::min<uint64_t>(groups, cMaxMeshDim));
     uint32_t       gy     = static_cast<uint32_t>((groups + gx - 1) / gx);
     const uint64_t stride = static_cast<uint64_t>(gx) * 256;
 
-    for (uint32_t mode = 0; mode < 2; ++mode) {
-        prepare_exec->record(static_cast<uint32_t>(gx) * 256, gy, 1,
-                             {
-                                 .parent       = reinterpret_cast<uint32_t*>(d_parent.address),
-                                 .edge_src     = reinterpret_cast<uint32_t*>(d_edge_src.address),
-                                 .row_offsets  = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
-                                 .num_vertices = num_vertices_,
-                                 .stride       = stride,
-                                 .mode         = mode,
-                             });
-    }
+    prepare_exec->record(static_cast<uint32_t>(gx) * 256, gy, 1,
+                         {
+                             .parent       = reinterpret_cast<uint32_t*>(d_parent.address),
+                             .num_vertices = num_vertices_,
+                             .stride       = stride,
+                         });
     ctx.barrier(d_parent, Access::Write, Access::Read);
-    ctx.barrier(d_edge_src, Access::Write, Access::Read);
     ctx.fsync();
 }
 
@@ -118,6 +111,7 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
     uint64_t active_count = num_edges_;
 
     for (;;) {
+        const auto round_t0 = high_resolution_clock::now();
         ctx.fill(d_counters, 0);
         ctx.barrier(d_counters, Access::TransferWrite, Access::Read);
 
@@ -130,12 +124,13 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
 
             exec->record_raw(gx, gy, 1,
                              {
-                                 .edge_src    = reinterpret_cast<uint32_t*>(d_edge_src.address),
+                                 .row_offsets = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
                                  .edge_lists  = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
                                  .parent      = reinterpret_cast<uint32_t*>(d_parent.address),
                                  .active      = in ? reinterpret_cast<uint32_t*>(in->address) : nullptr,
                                  .next_active = reinterpret_cast<uint32_t*>(out->address),
                                  .counters    = reinterpret_cast<uint32_t*>(d_counters.address),
+                                 .num_vertices = num_vertices_,
                                  .edge_start  = offset,
                                  .edge_num    = n,
                                  .use_active  = in ? 1u : 0u,
@@ -154,21 +149,17 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
         ctx.barrier(d_counters, Access::TransferRead, Access::TransferWrite);
 
         const uint32_t* counters = reinterpret_cast<const uint32_t*>(h_counters.mappedPtr);
-        const uint32_t  changes  = counters[0];
         const uint32_t  produced = counters[1];
         ++rounds_;
 
         if (std::getenv("MARGA_CC_TRACE"))
-            std::fprintf(stderr, "cc round %u: in=%llu changes=%u produced=%u\n", rounds_,
-                         static_cast<unsigned long long>(active_count), changes, produced);
+            std::fprintf(stderr, "cc round %u: in=%llu produced=%u wall=%.3f ms\n", rounds_,
+                         static_cast<unsigned long long>(active_count), produced,
+                         std::chrono::duration<double, std::milli>(
+                             std::chrono::high_resolution_clock::now() - round_t0)
+                             .count());
 
-        if (changes == 0) {
-            if (produced != 0)
-                std::fprintf(stderr,
-                             "cc: warning: round %u reported no hooks but %u live edges\n",
-                             rounds_, produced);
-            break;
-        }
+        // No live pairs remain: every edge's endpoints share a root.
         if (produced == 0)
             break;
 

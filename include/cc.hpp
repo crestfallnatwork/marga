@@ -53,7 +53,6 @@ class CC {
     std::unique_ptr<PrepareExec> prepare_exec;
 
     AllocationInfo d_parent{};
-    AllocationInfo d_edge_src{};
     AllocationInfo d_active[2]{};
     AllocationInfo d_counters{};
     AllocationInfo h_counters{};
