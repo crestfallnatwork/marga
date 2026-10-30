@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
     uint32_t    num_runs    = 1;
     uint32_t    num_sources = 0;
     uint32_t    group_size  = 0;
-    uint32_t    levels_per_submit = 16;
+    uint32_t    levels_per_submit = 8;
 
     auto cli = group(
         value("graph file", graph_file) % "MTX graph file to process",

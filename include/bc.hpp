@@ -32,7 +32,7 @@ class BC {
     // either way. `levels_per_submit` forward levels run per host submission
     // (1 = one fence wait per level). Returns the levels of the deepest group.
     uint32_t run(Graph const& g, uint32_t sources, uint32_t group,
-                 uint32_t levels_per_submit = 16);
+                 uint32_t levels_per_submit = 8);
 
     // Largest source count in {4, 8, 16, 32, 64} whose records and frontier
     // fit in 60% of `pool_bytes`.
@@ -100,7 +100,7 @@ class BC {
     uint32_t num_sources_    = 0;
     uint32_t group_          = 0;
     uint32_t levels_         = 0;
-    uint32_t levels_per_submit_ = 16;
+    uint32_t levels_per_submit_ = 8;
     uint64_t levels_capacity_   = 0;
     double   init_ms_        = 0.0;
     double   forward_ms_     = 0.0;
