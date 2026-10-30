@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 
 static const uint32_t cMaxMeshDim  = 65535;
@@ -78,6 +79,7 @@ BC::~BC()
     drop(ctx, h_counters);
     drop(ctx, h_state);
     drop(ctx, h_levels);
+    drop(ctx, h_sources);
     drop(ctx, h_delta);
 }
 
@@ -89,6 +91,7 @@ void BC::release()
     drop(ctx, d_level_state);
     drop(ctx, d_levels);
     drop(ctx, d_grid);
+    drop(ctx, d_sources);
 }
 
 uint32_t BC::choose_sources(uint64_t num_vertices, size_t pool_bytes)
@@ -118,6 +121,16 @@ void BC::allocate(uint64_t num_vertices, uint32_t sources, uint32_t group)
     CheckAllocation(d_frontier,
                     std::format("bc: frontier ({:.2f} GiB)",
                                 frontier_cap_ * sizeof(uint64_t) / 1073741824.0));
+
+    // Row -> source vertex of the live rows, read by the prepare and the
+    // frontier seed.
+    d_sources = ctx.pool_allocator->allocate(sources * sizeof(uint32_t), 0);
+    CheckAllocation(d_sources, "bc: source list");
+    if (!h_sources.mappedPtr || h_sources.size < sources * sizeof(uint32_t)) {
+        drop(ctx, h_sources);
+        h_sources = ctx.pinned_allocator->allocate(sources * sizeof(uint32_t), 0);
+        CheckAllocation(h_sources, "bc: host source list");
+    }
 
     d_counters = ctx.pool_allocator->allocate(2 * sizeof(uint32_t), 0);
     CheckAllocation(d_counters, "bc: counters");
@@ -168,21 +181,20 @@ void BC::prepare(uint32_t sources)
                          {
                              .records_u    = reinterpret_cast<uint32_t*>(d_records.address),
                              .records_f    = reinterpret_cast<float*>(d_records.address),
+                             .sources      = reinterpret_cast<uint32_t*>(d_sources.address),
                              .num_vertices = num_vertices_,
                              .stride       = stride,
-                             .num_sources  = sources,
                          });
     ctx.barrier(d_records, Access::Write, Access::Read);
 }
 
 void BC::seed_frontier(uint32_t first_source, uint32_t last_source)
 {
+    const uint32_t* sources = reinterpret_cast<const uint32_t*>(h_sources.mappedPtr);
     std::vector<uint64_t> seeds;
     seeds.reserve(last_source - first_source);
-    for (uint32_t s = first_source; s < last_source; ++s) {
-        const uint64_t src = static_cast<uint64_t>(s) * num_vertices_ / num_sources_;
-        seeds.push_back((static_cast<uint64_t>(s) << 32) | src);
-    }
+    for (uint32_t s = first_source; s < last_source; ++s)
+        seeds.push_back((static_cast<uint64_t>(s) << 32) | sources[s]);
 
     ctx.barrier(d_frontier, Access::Read, Access::TransferWrite);
     ctx.update(d_frontier, 0, seeds.size() * sizeof(uint64_t), seeds.data());
@@ -204,18 +216,41 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
         return 0;
 
     num_sources_ = std::max<uint32_t>(1, std::min<uint32_t>(sources, num_vertices_));
-    group_       = std::max<uint32_t>(1, std::min<uint32_t>(group, num_sources_));
+
+    // Sampled sources with no out-edge contribute delta = 0 to every vertex, so
+    // they are dropped before any state is allocated.
+    live_sources_.clear();
+    for (uint32_t s = 0; s < num_sources_; ++s) {
+        const uint32_t v = static_cast<uint32_t>(static_cast<uint64_t>(s) * num_vertices_ /
+                                                 num_sources_);
+        if (g.row_offsets[v + 1] > g.row_offsets[v])
+            live_sources_.push_back(v);
+    }
+    rows_ = static_cast<uint32_t>(live_sources_.size());
+    group_ = std::max<uint32_t>(1, std::min<uint32_t>(group, std::max<uint32_t>(rows_, 1u)));
     levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
     scatter_backward_  = scatter_backward;
 
     const auto init_t0 = high_resolution_clock::now();
-    allocate(num_vertices_, num_sources_, group_);
-    prepare(num_sources_);
+    if (rows_ == 0) {
+        init_ms_ = duration<double, std::milli>(high_resolution_clock::now() - init_t0).count();
+        return 0;
+    }
+
+    allocate(num_vertices_, rows_, group_);
+
+    // Row -> source vertex, used by the prepare pass and the frontier seed.
+    std::memcpy(h_sources.mappedPtr, live_sources_.data(), rows_ * sizeof(uint32_t));
+    ctx.barrier(d_sources, Access::Read, Access::TransferWrite);
+    ctx.update(d_sources, 0, rows_ * sizeof(uint32_t), live_sources_.data());
+    ctx.barrier(d_sources, Access::TransferWrite, Access::Read);
+
+    prepare(rows_);
     ctx.fsync();
     init_ms_ = duration<double, std::milli>(high_resolution_clock::now() - init_t0).count();
 
-    for (uint32_t s0 = 0; s0 < num_sources_; s0 += group_) {
-        const uint32_t        s1 = std::min(s0 + group_, num_sources_);
+    for (uint32_t s0 = 0; s0 < rows_; s0 += group_) {
+        const uint32_t        s1 = std::min(s0 + group_, rows_);
         std::vector<uint64_t> level_base;
         std::vector<uint64_t> level_count;
 
@@ -469,16 +504,13 @@ void BC::backward_scatter(Graph const& g, std::vector<uint64_t> const& level_bas
 
 std::vector<uint32_t> BC::source_list() const
 {
-    std::vector<uint32_t> out(num_sources_);
-    for (uint32_t s = 0; s < num_sources_; ++s)
-        out[s] = static_cast<uint32_t>(static_cast<uint64_t>(s) * num_vertices_ / num_sources_);
-    return out;
+    return live_sources_;
 }
 
 std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)
 {
     std::vector<float> out;
-    if (!d_records.buffer || num_sources_ == 0)
+    if (!d_records.buffer || rows_ == 0)
         return out;
     if (vertex_offset >= num_vertices_)
         return out;
@@ -487,7 +519,7 @@ std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)
         return out;
 
     const size_t bytes = static_cast<size_t>(count) * cRecordBytes;
-    const size_t need  = static_cast<size_t>(num_sources_) * bytes;
+    const size_t need  = static_cast<size_t>(rows_) * bytes;
     if (!h_delta.mappedPtr || h_delta.size < need) {
         drop(ctx, h_delta);
         h_delta = ctx.pinned_allocator->allocate(need, 0);
@@ -495,11 +527,11 @@ std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)
     }
 
     if (trace_enabled())
-        std::fprintf(stderr, "bc copy_delta: %u sources x %llu vertices\n", num_sources_,
+        std::fprintf(stderr, "bc copy_delta: %u sources x %llu vertices\n", rows_,
                      static_cast<unsigned long long>(count));
 
     ctx.barrier(d_records, Access::Write, Access::TransferRead);
-    for (uint32_t s = 0; s < num_sources_; ++s) {
+    for (uint32_t s = 0; s < rows_; ++s) {
         const size_t src_off =
             static_cast<size_t>((static_cast<uint64_t>(s) * num_vertices_ + vertex_offset) *
                                 cRecordBytes);
@@ -512,8 +544,8 @@ std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)
     // unsignalled for the next wait. Nothing writes the records afterwards.
 
     const float* words = reinterpret_cast<const float*>(h_delta.mappedPtr);
-    out.resize(static_cast<size_t>(num_sources_) * count);
-    for (uint32_t s = 0; s < num_sources_; ++s) {
+    out.resize(static_cast<size_t>(rows_) * count);
+    for (uint32_t s = 0; s < rows_; ++s) {
         for (uint64_t v = 0; v < count; ++v) {
             const size_t slot = (static_cast<size_t>(s) * count + v) * cRecordWords;
             out[static_cast<size_t>(s) * count + v] = words[slot + 2];

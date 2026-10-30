@@ -42,7 +42,10 @@ class BC {
     // `vertex_offset`, one row of `count` floats per source. No normalization.
     std::vector<float> copy_delta(uint64_t vertex_offset, uint64_t count);
 
-    // Source vertices actually sampled, in order.
+    // Source vertices actually sampled, in order. Sampled sources with no
+    // out-edges contribute zero dependency to every vertex (they have no
+    // successors to accumulate from) and are dropped before allocation, so the
+    // returned list is shorter than num_sources() when the sample contains any.
     std::vector<uint32_t> source_list() const;
 
     double   init_ms() const { return init_ms_; }
@@ -50,6 +53,8 @@ class BC {
     double   backward_ms() const { return backward_ms_; }
     uint32_t levels() const { return levels_; }
     uint32_t num_sources() const { return num_sources_; }
+    // Rows with state allocated: the sampled sources that have an out-edge.
+    uint32_t live_sources() const { return rows_; }
     uint32_t group_size() const { return group_; }
     uint64_t vertex_count() const { return num_vertices_; }
     uint64_t frontier_peak() const { return frontier_peak_; }
@@ -93,15 +98,19 @@ class BC {
     AllocationInfo d_level_state{};
     AllocationInfo d_levels{};
     AllocationInfo d_grid{};
+    AllocationInfo d_sources{};
     AllocationInfo h_counters{};
     AllocationInfo h_state{};
     AllocationInfo h_levels{};
+    AllocationInfo h_sources{};
     AllocationInfo h_delta{};
 
     uint64_t num_vertices_   = 0;
     uint64_t frontier_cap_   = 0;
     uint64_t frontier_peak_  = 0;
     uint32_t num_sources_    = 0;
+    uint32_t rows_           = 0;
+    std::vector<uint32_t> live_sources_;
     uint32_t group_          = 0;
     uint32_t levels_         = 0;
     uint32_t levels_per_submit_ = 8;

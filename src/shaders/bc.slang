@@ -406,13 +406,14 @@ void bc_bwd_compute(uint3 tid : SV_DispatchThreadID) {
 }
 
 // One-time setup per source row: distance unvisited, sigma and delta zero, and
-// the source itself at distance 0 with one path.
+// the source itself at distance 0 with one path. Row z belongs to source
+// sources[z] (the sample minus its sources without out-edges).
 struct BCPrepareIn {
     uint32_t* records_u;
     float*    records_f;
+    uint32_t* sources;
     uint64_t  num_vertices;
     uint64_t  stride;
-    uint64_t  num_sources;
 };
 // @bind(bc_prepare_compute)
 [[vk::push_constant]]
@@ -431,7 +432,7 @@ void bc_prepare_compute(uint3 tid : SV_DispatchThreadID) {
     *Splice(bcPrepareIn.records_f, row + 1) = 0.0f;
     *Splice(bcPrepareIn.records_f, row + 2) = 0.0f;
 
-    uint64_t source = (uint64_t(tid.z) * bcPrepareIn.num_vertices) / bcPrepareIn.num_sources;
+    uint64_t source = uint64_t(At(bcPrepareIn.sources, tid.z));
     if (v == source) {
         *Splice(bcPrepareIn.records_u, row)     = 0u;
         *Splice(bcPrepareIn.records_f, row + 1) = 1.0f;

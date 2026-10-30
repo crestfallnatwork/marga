@@ -135,9 +135,10 @@ int main(int argc, char* argv[])
     std::cout << std::format("  Average BC forward:  {:.3f} ms\n", fwd_ms / num_runs);
     std::cout << std::format("  Average BC backward: {:.3f} ms\n", bwd_ms / num_runs);
     std::cout << std::format("  Levels:              {}\n", levels);
-    std::cout << std::format("  Sources:             {} (group {}, {} levels per submit, {} "
-                             "backward)\n",
-                             bc.num_sources(), bc.group_size(), levels_per_submit, backward_mode);
+    std::cout << std::format("  Sources:             {} sampled (group {}, {} levels per submit, {} "
+                             "backward), {} live\n",
+                             bc.num_sources(), bc.group_size(), levels_per_submit, backward_mode,
+                             bc.live_sources());
     std::cout << std::format("  Frontier entries:    {} of {} ({:.2f} GiB records, {:.2f} GiB "
                              "frontier)\n",
                              bc.frontier_peak(),
@@ -161,7 +162,7 @@ int main(int argc, char* argv[])
         uint64_t checked = 0;
         double   max_rel = 0.0;
 
-        for (uint32_t s = 0; s < bc.num_sources(); ++s) {
+        for (uint32_t s = 0; s < bc.live_sources(); ++s) {
             const auto val_t0 = high_resolution_clock::now();
             const std::vector<float> row(gpu.begin() + static_cast<std::ptrdiff_t>(s) * window_count,
                                          gpu.begin() + static_cast<std::ptrdiff_t>(s + 1) * window_count);
@@ -182,7 +183,7 @@ int main(int argc, char* argv[])
 
         std::cout << std::format("CPU reference: {} values compared over {} sources, max relative "
                                  "deviation {:.3e} (tolerance 1e-3)\n",
-                                 checked, bc.num_sources(), max_rel);
+                                 checked, bc.live_sources(), max_rel);
         std::cout << (ok ? "SUCCESS: GPU and CPU dependency values match within tolerance.\n"
                          : "FAILURE: GPU and CPU dependency values differ beyond tolerance.\n");
         if (!ok)
