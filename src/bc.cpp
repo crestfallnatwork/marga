@@ -287,18 +287,17 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
     }
     rows_ = static_cast<uint32_t>(live_sources_.size());
     // Group size: how many sources share one frontier and one pass over their
-    // records. A group's record rows are the working set its level reads
-    // successors from, so a group whose rows are not far larger than the cache
-    // reuses them across a level's edges; that is worth more than the extra
-    // level dispatches it costs. The budget is a last-level cache's worth: past
-    // it the reads miss at any group size, so all sources are fused and the
-    // level dispatches are minimised.
-    constexpr uint64_t cGroupRowBytes = 64ull << 20;
+    // records. A group's record rows are the working set a level reads
+    // successors from, and a level reuses them only while they stay around a
+    // cache's worth, so a small group can be worth more than the level
+    // dispatches it costs. Past twice that budget the reads miss at any group
+    // size, so all sources are fused and the dispatches are minimised.
+    constexpr uint64_t cGroupRowBytes = 72ull << 20;
     if (group == 0) {
         const uint64_t row_bytes = num_vertices_ * cRecordBytes;
-        const uint64_t g = row_bytes >= cGroupRowBytes
-                               ? rows_
-                               : std::max<uint64_t>(1, cGroupRowBytes / row_bytes);
+        uint64_t       g         = cGroupRowBytes / (row_bytes ? row_bytes : 1);
+        if (row_bytes > 2 * cGroupRowBytes)
+            g = rows_;
         group_ = static_cast<uint32_t>(std::max<uint64_t>(1, std::min<uint64_t>(g, rows_)));
     } else {
         group_ = std::max<uint32_t>(1, std::min<uint32_t>(group, std::max<uint32_t>(rows_, 1u)));
