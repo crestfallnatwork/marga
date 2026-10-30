@@ -226,8 +226,10 @@ void bc_step_compute(uint3 tid : SV_DispatchThreadID) {
     *Splice(bcStepIn.level_state, 2) = base + produced;
     *Splice(bcStepIn.counters, 0)    = 0u;
 
+    // An empty level means the traversal is over, so only non-empty levels are
+    // recorded and the recorded index stays equal to the level number.
     uint64_t recorded = At(bcStepIn.level_state, 3);
-    if (recorded < bcStepIn.levels_capacity) {
+    if (produced > 0 && recorded < bcStepIn.levels_capacity) {
         *Splice(bcStepIn.levels, 2 * recorded)     = base;
         *Splice(bcStepIn.levels, 2 * recorded + 1) = produced;
         *Splice(bcStepIn.level_state, 3)           = recorded + 1;

@@ -130,7 +130,7 @@ void BC::allocate(uint64_t num_vertices, uint32_t sources, uint32_t group)
     CheckAllocation(d_level_state, "bc: level state");
 
     // (base, count) per level, recorded by the step shader.
-    levels_capacity_ = std::min<uint64_t>(num_vertices + 1, 1ull << 22);
+    levels_capacity_ = std::min<uint64_t>(num_vertices, 1ull << 22);
     d_levels = ctx.pool_allocator->allocate(levels_capacity_ * 2 * sizeof(uint64_t), 0);
     CheckAllocation(d_levels, "bc: levels");
 
