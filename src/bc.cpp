@@ -373,7 +373,9 @@ std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)
     }
     ctx.fsync();
     ctx.invalidate(h_delta);
-    ctx.barrier(d_records, Access::TransferRead, Access::Write);
+    // No trailing barrier: barriers are recorded into the current command
+    // buffer, and leaving one un-submitted would leave the stream's fence
+    // unsignalled for the next wait. Nothing writes the records afterwards.
 
     const float* words = reinterpret_cast<const float*>(h_delta.mappedPtr);
     out.resize(static_cast<size_t>(num_sources_) * count);
