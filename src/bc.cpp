@@ -70,6 +70,12 @@ bool trace_enabled()
 // Probe used to price the per-level step dispatch: emits a second step of the
 // same shape into a scratch area, so the difference against the normal run is
 // the cost of one step dispatch plus its barrier. Results are unaffected.
+bool plain_sigma_enabled()
+{
+    static const bool enabled = std::getenv("MARGA_BC_PLAIN_SIGMA") != nullptr;
+    return enabled;
+}
+
 bool step_probe_enabled()
 {
     static const bool enabled = std::getenv("MARGA_BC_STEP_PROBE") != nullptr;
@@ -349,6 +355,7 @@ uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source
     ctx.update(d_level_state, 3 * sizeof(uint64_t), sizeof(uint64_t), &zero);
     ctx.barrier(d_level_state, Access::TransferWrite, Access::Read);
 
+    const bool plain_sigma = plain_sigma_enabled();
     const auto fwd_t0 = high_resolution_clock::now();
 
     uint64_t recorded = 0;
@@ -404,6 +411,7 @@ uint32_t BC::forward(Graph const& g, uint32_t first_source, uint32_t last_source
                             .counters       = reinterpret_cast<uint32_t*>(d_counters.address),
                             .num_vertices   = num_vertices_,
                             .level          = level + i,
+                            .plain_sigma    = plain_sigma ? 1u : 0u,
                         });
 
             // This level's distance/sigma/frontier writes are read by the next
