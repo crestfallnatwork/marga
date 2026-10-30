@@ -262,8 +262,8 @@ struct BCBwdIn {
     uint64_t stride;
     uint32_t level;
     // Items whose out-degree reaches this are expanded one warp per item by
-    // bc_bwdw_compute instead of one thread per item here. Zero or ~0 selects
-    // the plain one-thread-per-item pass for the whole level.
+    // bc_bwdw_compute instead of one thread per item here. ~0 leaves every item
+    // to this pass.
     uint32_t hub_threshold;
     uint32_t wave_count;
 };
