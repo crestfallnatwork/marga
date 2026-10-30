@@ -48,12 +48,22 @@ CC::~CC()
     ctx.deallocate(h_parent);
 }
 
+namespace {
+// Context::deallocate does not clear the handle; a stale one would be reused
+// (or freed twice) on the next run of the same CC object.
+void drop(Context& ctx, AllocationInfo& info)
+{
+    ctx.deallocate(info);
+    info = {};
+}
+} // namespace
+
 void CC::release()
 {
-    ctx.deallocate(d_parent);
-    ctx.deallocate(d_active[0]);
-    ctx.deallocate(d_active[1]);
-    ctx.deallocate(d_counters);
+    drop(ctx, d_parent);
+    drop(ctx, d_active[0]);
+    drop(ctx, d_active[1]);
+    drop(ctx, d_counters);
 }
 
 void CC::prepare(Graph const& g)
@@ -197,7 +207,7 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
         const uint64_t  need = static_cast<uint64_t>(produced) * 2 * sizeof(uint32_t);
         if (!nxt->buffer || nxt->size < need) {
             if (nxt->buffer)
-                ctx.deallocate(*nxt);
+                drop(ctx, *nxt);
             AllocationInfo next = ctx.pool_allocator->allocate(need, 0);
             if (next.res != vk::Result::eSuccess) {
                 // No room for a second list: rescan the CSR into `out`.
@@ -233,7 +243,7 @@ std::vector<uint32_t> CC::resolve_roots()
         return {};
 
     if (!h_parent.mappedPtr || h_parent.size < n * sizeof(uint32_t)) {
-        ctx.deallocate(h_parent);
+        drop(ctx, h_parent);
         h_parent = ctx.pinned_allocator->allocate(n * sizeof(uint32_t), 0);
         CheckAllocation(h_parent, "cc: host parent");
     }
