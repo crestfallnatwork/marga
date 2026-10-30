@@ -23,7 +23,7 @@
 // is cRecordWords words per entry.
 
 static const uint cMaxMeshDim   = 65535;
-static const uint cItemsPerLane = 16;
+static const uint cItemsPerLane = 8;
 static const uint cGroupItems   = WAVE_SIZE * cItemsPerLane;
 static const uint cRecordWords  = 4;
 static const uint cMeshGroup    = 128;
@@ -159,18 +159,14 @@ void bc_fwd_mesh(
     uint next_level = bcFwdIn.level + 1u;
     uint claimed    = 0;
 
-    // Fast path: only the first edges that reach an unvisited vertex pay the
-    // claim atomic.
-    uint distance = At(bcFwdIn.records_u, row);
-    if (distance == cUnvisited) {
-        uint previous = 0;
-        InterlockedCompareExchange(*Splice(bcFwdIn.records_u, row), cUnvisited, next_level, previous);
-        if (previous == cUnvisited) {
-            claimed   = 1;
-            distance  = next_level;
-        } else {
-            distance = previous;
-        }
+    // Every edge claims unconditionally: the atomic both elects the single
+    // appender and returns the distance already set.
+    uint previous = 0;
+    InterlockedCompareExchange(*Splice(bcFwdIn.records_u, row), cUnvisited, next_level, previous);
+    uint distance = previous;
+    if (previous == cUnvisited) {
+        claimed  = 1;
+        distance = next_level;
     }
 
     // Every edge landing on the next level contributes paths, not only the
