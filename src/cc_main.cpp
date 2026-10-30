@@ -45,7 +45,11 @@ int main(int argc, char* argv[])
     auto& ctx = *ctx_res.val();
 
     std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
+    const auto import_t0 = high_resolution_clock::now();
     auto g = pictor::graphs::Graph::import(ctx, graph_file, sym, pictor::graphs::GraphLayout::CSR);
+    std::cout << std::format("Import: {:.3f} ms\n",
+                             duration<double, std::milli>(high_resolution_clock::now() - import_t0)
+                                 .count());
 
     size_t free_mem = ctx.get_device_free_memory() * 0.95;
     auto   dev_allocator =
