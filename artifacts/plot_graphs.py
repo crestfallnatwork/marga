@@ -12,7 +12,7 @@ OUTPUT_DIR = "plots"
 
 # The targets and algorithms to generate plots for
 TARGETS = ["4090", "a6000"]
-ALGOS = ["pr", "tc", "bfs"]
+ALGOS = ["pr", "tc", "bfs", "cc", "bc"]
 
 # 1. Libraries to include in the plots
 LIBRARIES_TO_RENDER = [
