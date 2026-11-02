@@ -42,3 +42,6 @@ temp
 
 # Local scratch space for scripts, logs, throwaway outputs
 scratch/
+
+# API keys
+.env.local
