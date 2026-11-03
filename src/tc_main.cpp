@@ -22,16 +22,32 @@ int main(int argc, char* argv[])
     bool validate   = false;
     uint32_t num_runs = 1;
     bool drop_self_loops = false;
+    uint64_t batch_edges = 1u << 24;
+    std::string cull_name = "bounded";
 
     auto cli = group(value("graph file", graph_file) % "MTX graph file to process",
                      (option("-n", "--num-runs") & value("number of runs", num_runs)) %
                          "number of times to run the benchmark",
+                     (option("-b", "--batch") & value("edges per batch", batch_edges)) %
+                         "edges per launch/accumulation batch (default 2^24)",
+                     (option("-c", "--cull") & value("pruning level", cull_name)) %
+                         "pruning level: none | orient | bounded (default)",
                      option("-v", "--validate").set(validate) %
                          "validate GPU results against parallel CPU TC",
                      option("--drop-self-loops").set(drop_self_loops) %
                          "remove u == v entries after import (simple-graph view)");
 
     if (parse(argc, argv, cli)) {
+        uint32_t cull = 2;
+        if (cull_name == "none")
+            cull = 0;
+        else if (cull_name == "orient")
+            cull = 1;
+        else if (cull_name != "bounded") {
+            std::cerr << "unknown cull level: " << cull_name << " (use none|orient|bounded)"
+                      << std::endl;
+            return 1;
+        }
         auto ctx_res = pictor::Context::create();
         if (!ctx_res.ok()) {
             std::cerr << "Failed to create context" << std::endl;
@@ -57,9 +73,10 @@ int main(int argc, char* argv[])
         double total_time_ms = 0;
         uint64_t res = 0;
         
-        std::cout << "Running TC " << num_runs << " times...\n";
+        std::cout << "Running TC " << num_runs << " times (cull=" << cull_name
+                  << ", batch=" << batch_edges << ")...\n";
         for (uint32_t run = 0; run < num_runs; run++) {
-            pictor::graphs::TC tc(ctx);
+            pictor::graphs::TC tc(ctx, cull, batch_edges);
             
             auto t1 = high_resolution_clock::now();
             res = tc.run(g);

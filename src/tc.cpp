@@ -12,7 +12,8 @@ static const uint32_t cMaxMeshDim = 65535;
 namespace pictor {
 namespace graphs {
 
-TC::TC(Context& ctx) : ctx(ctx)
+TC::TC(Context& ctx, uint32_t cull, uint64_t batch_edges)
+    : ctx(ctx), cull(cull), batch_edges(batch_edges)
 {
     tc.reset(TCExec::create(ctx).val().release());
 }
@@ -61,7 +62,7 @@ uint64_t TC::run(Graph const& g)
     }
 
     volatile uint32_t* res    = reinterpret_cast<uint32_t*>(h_result.mappedPtr);
-    uint32_t const cBatchSize = 1 << 24;
+    const uint64_t cBatchSize = batch_edges;
     uint64_t total_count      = 0;
 
     uint32_t total_tasks = (cBatchSize + tc->taskWgX - 1) / tc->taskWgX;
@@ -111,6 +112,7 @@ uint64_t TC::run(Graph const& g)
                            .task_noop    = task_noop,
                            .count_mesh   = count_mesh ? 1u : 0u,
                            .mesh_count   = reinterpret_cast<uint64_t*>(mesh_count_dev.address),
+                           .cull         = cull,
                        });
         if (profiling)
             ctx.timestamp(static_cast<uint32_t>(4 * batch_index + 1));
