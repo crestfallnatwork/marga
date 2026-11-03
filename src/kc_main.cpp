@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <string>
@@ -27,6 +28,7 @@ int main(int argc, char* argv[])
     uint32_t    num_runs         = 1;
     uint32_t    phases_per_submit = 32;
     uint32_t    k_core           = 0;
+    std::string dump_core;
 
     auto cli = group(
         value("graph file", graph_file) % "MTX graph file to process",
@@ -36,6 +38,8 @@ int main(int argc, char* argv[])
             "device phases per host submission (1 = one fence wait per phase)",
         (option("--k-core") & value("k", k_core)) %
             "also check the k-core subgraph for this k (0: pick two from the result)",
+        (option("--dump-core") & value("path", dump_core)) %
+            "write the core numbers as a raw uint32 array (for cross-system checks)",
         option("-v", "--validate").set(validate) %
             "validate GPU core numbers against the exact CPU decomposition",
         option("--keep-self-loops").set(keep_self_loops) %
@@ -120,6 +124,14 @@ int main(int argc, char* argv[])
     std::cout << std::format("  Max core:          {}\n", max_core);
     std::cout << std::format("  Frontier entries:  {} of {} ({:.2f} GiB)\n", peak,
                              kc.vertex_count(), static_cast<double>(peak) * 4.0 / 1073741824.0);
+
+    if (!dump_core.empty() && !core.empty()) {
+        std::ofstream out(dump_core, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(core.data()),
+                  static_cast<std::streamsize>(core.size() * sizeof(uint32_t)));
+        out.close();
+        std::cout << std::format("Dump: {} ({} uint32 values)\n", dump_core, core.size());
+    }
 
     if (validate) {
         std::cout << "Running CPU Validation..." << std::endl;
