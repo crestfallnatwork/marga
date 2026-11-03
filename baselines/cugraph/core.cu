@@ -98,8 +98,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+#ifdef KC_EDGE64
+    using vertex_t = int64_t;
+    using edge_t = int64_t;
+#else
     using vertex_t = int32_t;
     using edge_t = int32_t;
+#endif
+    using weight_t = float;
 
     // Set up RMM pool to avoid fragmentation and allocation overhead
     // (Must be declared before raft::handle_t to prevent segfaults during destruction)
@@ -215,11 +221,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::cout << "Dump: " << dump_path << " (" << h_graph.num_vertices
-                  << " int32 values)\n";
+                  << (sizeof(edge_t) == 8 ? " int64 values)\n" : " int32 values)\n");
     }
 
     for (size_t k : k_cores) {
-        auto [srcs, dsts, weights] = cugraph::k_core<vertex_t, edge_t, float, false>(
+        auto [srcs, dsts, weights] = cugraph::k_core<vertex_t, edge_t, weight_t, false>(
             handle, view, std::nullopt, k, cugraph::k_core_degree_type_t::IN,
             raft::device_span<edge_t const>(core_numbers.data(), core_numbers.size()), false);
         handle.sync_stream();

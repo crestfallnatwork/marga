@@ -61,3 +61,14 @@ target_link_libraries(core
         OpenMP::OpenMP_CXX
         csr
 )
+
+add_executable(core64 core.cu)
+target_compile_options(core64 PRIVATE "-O3" "-DKC_EDGE64")
+target_link_libraries(core64
+    PRIVATE 
+        cugraph::cugraph 
+        rmm::rmm 
+        raft::raft
+        OpenMP::OpenMP_CXX
+        csr
+)
