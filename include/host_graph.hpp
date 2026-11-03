@@ -27,11 +27,14 @@ struct HostGraph {
 };
 
 // Import a MatrixMarket file into host CSR/CSC. `symmetrize` forces the
-// symmetric view even for non-symmetric files. With `use_cache`, a binary
-// cache is read/written next to the file (<file>.csrbin / <file>.sym.csrbin,
-// and .cscbin for the CSC layout).
+// symmetric view even for non-symmetric files. `drop_self_loops` removes the
+// entries u == v after symmetrization and deduplication, so the row lengths are
+// the simple-graph degrees without self-loops. With `use_cache`, a binary cache
+// is read/written next to the file (<file>.csrbin / <file>.sym.csrbin, and
+// .cscbin for the CSC layout; a self-loop-free graph gets a .noself suffix).
 HostGraph import_mtx(const std::string& file, bool symmetrize = false,
-                     GraphLayout layout = GraphLayout::CSR, bool use_cache = false);
+                     GraphLayout layout = GraphLayout::CSR, bool use_cache = false,
+                     bool drop_self_loops = false);
 
 // Binary cache.
 void save_binary(const HostGraph& graph, const std::string& path);

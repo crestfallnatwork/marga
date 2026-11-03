@@ -34,7 +34,8 @@ struct Graph {
     void load_from_binary(const std::string& path);
 
     static Graph import(Context& ctx, std::string const& file, bool symmetrize = false,
-                        GraphLayout target_layout = GraphLayout::CSR);
+                        GraphLayout target_layout = GraphLayout::CSR,
+                        bool drop_self_loops = false);
 
   private:
     // Copy host CSR/CSC into pinned buffers and upload to the device.
