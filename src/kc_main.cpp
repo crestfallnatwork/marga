@@ -124,7 +124,7 @@ int main(int argc, char* argv[])
                              kc.vertex_count(), static_cast<double>(peak) * 4.0 / 1073741824.0);
     if (kc.probe_enabled()) {
         std::cout << std::format("  Mesh probe:        {} mesh groups ran, {} during seed phases "
-                                 "(must be 0)\n",
+                                 "(0 unless the driver launches zero-group dispatches)\n",
                                  kc.mesh_runs(), kc.seed_mesh_runs());
     }
 
