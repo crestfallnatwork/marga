@@ -45,6 +45,9 @@ struct TCIn {
     uint32_t task_noop;
     uint32_t count_mesh;
     uint64_t* mesh_count;
+    // Pruning level: 0 = none (all edges, full lists), 1 = orientation cull
+    // only, 2 = orientation + bounded lists (the default algorithm).
+    uint32_t cull;
 };
 // @bind(tc_task)
 [[vk::push_constant]]
@@ -93,15 +96,25 @@ void tc_task(
             u++;
         }
         uint v = At(tcIn.edge_lists, eid);
-        if(u < v) {
-            uint64_t v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
-                                        tcIn.list_offset[v+1],
-                                        (uint32_t vertex) => (vertex > v));
+        uint64_t v_start = tcIn.list_offset[v];
+        uint64_t u_start = tcIn.list_offset[u];
+        if(tcIn.cull == 2u) {
+            if(u < v) {
+                v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v],
+                                     tcIn.list_offset[v+1],
+                                     (uint32_t vertex) => (vertex > v));
+                u_start = eid + 1;
+                uint n_v = tcIn.list_offset[v+1] - v_start;
+                uint n_u = tcIn.list_offset[u+1] - u_start;
+                candidates = min(n_v, n_u);
+            }
+        } else if(tcIn.cull == 1u ? (u < v) : (u != v)) {
             uint n_v = tcIn.list_offset[v+1] - v_start;
-            uint n_u = tcIn.list_offset[u+1] - (eid + 1);
-            tcPayload.v_list_offsets[lid] = v_start - tcIn.list_offset[v];
+            uint n_u = tcIn.list_offset[u+1] - u_start;
             candidates = min(n_v, n_u);
         }
+        tcPayload.v_list_offsets[lid] =
+            (tcIn.cull == 2u) ? uint(v_start - tcIn.list_offset[v]) : 0u;
     }
 
     uint candidates_scan = WavePrefixSum(candidates);
@@ -162,9 +175,9 @@ void tc_mesh(
     }
     uint v = At(tcIn.edge_lists, global_eid);
 
-    uint64_t u_start = global_eid+1;
+    uint64_t u_start = (tcIn.cull == 2u) ? global_eid + 1 : tcIn.list_offset[u];
     uint64_t v_start;
-    if(tcIn.no_payload) {
+    if(tcIn.cull == 2u && tcIn.no_payload) {
         v_start = UpperBound(tcIn.edge_lists, tcIn.list_offset[v], tcIn.list_offset[v+1],
                              (uint32_t vertex) => (vertex > v));
     } else {

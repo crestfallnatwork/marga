@@ -21,14 +21,27 @@ int main(int argc, char* argv[])
     std::string graph_file;
     bool validate   = false;
     uint32_t num_runs = 1;
+    std::string cull_name = "bounded";
 
     auto cli = group(value("graph file", graph_file) % "MTX graph file to process",
                      (option("-n", "--num-runs") & value("number of runs", num_runs)) %
                          "number of times to run the benchmark",
+                     (option("-c", "--cull") & value("pruning level", cull_name)) %
+                         "pruning level: none | orient | bounded (default)",
                      option("-v", "--validate").set(validate) %
                          "validate GPU results against parallel CPU TC");
 
     if (parse(argc, argv, cli)) {
+        uint32_t cull = 2;
+        if (cull_name == "none")
+            cull = 0;
+        else if (cull_name == "orient")
+            cull = 1;
+        else if (cull_name != "bounded") {
+            std::cerr << "unknown cull level: " << cull_name << " (use none|orient|bounded)"
+                      << std::endl;
+            return 1;
+        }
         auto ctx_res = pictor::Context::create();
         if (!ctx_res.ok()) {
             std::cerr << "Failed to create context" << std::endl;
@@ -53,9 +66,9 @@ int main(int argc, char* argv[])
         double total_time_ms = 0;
         uint64_t res = 0;
         
-        std::cout << "Running TC " << num_runs << " times...\n";
+        std::cout << "Running TC " << num_runs << " times (cull=" << cull_name << ")...\n";
         for (uint32_t run = 0; run < num_runs; run++) {
-            pictor::graphs::TC tc(ctx);
+            pictor::graphs::TC tc(ctx, cull);
             
             auto t1 = high_resolution_clock::now();
             res = tc.run(g);

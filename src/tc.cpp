@@ -12,7 +12,7 @@ static const uint32_t cMaxMeshDim = 65535;
 namespace pictor {
 namespace graphs {
 
-TC::TC(Context& ctx) : ctx(ctx)
+TC::TC(Context& ctx, uint32_t cull) : ctx(ctx), cull(cull)
 {
     tc.reset(TCExec::create(ctx).val().release());
 }
@@ -111,6 +111,7 @@ uint64_t TC::run(Graph const& g)
                            .task_noop    = task_noop,
                            .count_mesh   = count_mesh ? 1u : 0u,
                            .mesh_count   = reinterpret_cast<uint64_t*>(mesh_count_dev.address),
+                           .cull         = cull,
                        });
         if (profiling)
             ctx.timestamp(static_cast<uint32_t>(4 * batch_index + 1));
