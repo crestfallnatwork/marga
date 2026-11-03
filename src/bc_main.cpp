@@ -36,6 +36,7 @@ int main(int argc, char* argv[])
     uint32_t    levels_per_submit = 8;
     uint32_t    hub_degree    = 0;
     std::string backward_mode = "gather";
+    bool        drop_self_loops = false;
 
     auto cli = group(
         value("graph file", graph_file) % "MTX graph file to process",
@@ -55,7 +56,9 @@ int main(int argc, char* argv[])
         option("-v", "--validate").set(validate) %
             "validate GPU dependency values against a CPU Brandes reference",
         option("-s", "--sym").set(sym) %
-            "symmetric view: import symmetrized (each undirected edge twice)");
+            "symmetric view: import symmetrized (each undirected edge twice)",
+        option("--drop-self-loops").set(drop_self_loops) %
+            "remove u == v entries after import (simple-graph view)");
 
     if (!parse(argc, argv, cli)) {
         std::cout << make_man_page(cli, argv[0]);
@@ -71,7 +74,8 @@ int main(int argc, char* argv[])
 
     std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
     const auto import_t0 = high_resolution_clock::now();
-    auto g = pictor::graphs::Graph::import(ctx, graph_file, sym, pictor::graphs::GraphLayout::CSR);
+    auto g = pictor::graphs::Graph::import(ctx, graph_file, sym, pictor::graphs::GraphLayout::CSR,
+                                           drop_self_loops);
     std::cout << std::format("Import: {:.3f} ms\n",
                              duration<double, std::milli>(high_resolution_clock::now() - import_t0)
                                  .count());

@@ -20,12 +20,15 @@ int main(int argc, char* argv[])
     std::string graph_file;
     uint32_t num_runs = 1;
     bool validate = false;
+    bool drop_self_loops = false;
 
     auto cli = group(value("graph file", graph_file) % "MTX graph file to process",
                      (option("-n", "--num-runs") & value("number of runs", num_runs)) %
                          "number of times to run the benchmark",
                      option("-v", "--validate").set(validate) %
-                         "validate GPU results against parallel CPU PageRank");
+                         "validate GPU results against parallel CPU PageRank",
+                     option("--drop-self-loops").set(drop_self_loops) %
+                         "remove u == v entries after import (simple-graph view)");
 
     if (parse(argc, argv, cli)) {
         auto ctx_res = pictor::Context::create();
@@ -40,7 +43,8 @@ int main(int argc, char* argv[])
         {
             std::cout << "Importing graph as CSC: " << graph_file << "..." << std::endl;
             auto g = pictor::graphs::Graph::import(ctx, graph_file, false,
-                                                   pictor::graphs::GraphLayout::CSC);
+                                                   pictor::graphs::GraphLayout::CSC,
+                                                   drop_self_loops);
             
             size_t free_mem = ctx.get_device_free_memory() * 0.95;
             ctx.set_device_allocator(std::move(
@@ -92,7 +96,8 @@ int main(int argc, char* argv[])
                          "behaviour:"
                       << std::endl;
             auto g = pictor::graphs::Graph::import(ctx, graph_file, false,
-                                                   pictor::graphs::GraphLayout::CSR);
+                                                   pictor::graphs::GraphLayout::CSR,
+                                                   drop_self_loops);
             std::vector<double> pr_cpu(g.num_vertices, 0.0);
             double dangling  = 0.;
             double all_error = 0.;

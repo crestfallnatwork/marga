@@ -50,3 +50,25 @@ target_link_libraries(tc
 add_executable(flat_pagerank flat_pagerank.cu)
 target_compile_options(flat_pagerank PRIVATE "-O3")
 target_link_libraries(flat_pagerank PRIVATE cugraph::cugraph rmm::rmm raft::raft OpenMP::OpenMP_CXX csr)
+
+add_executable(core core.cu)
+target_compile_options(core PRIVATE "-O3")
+target_link_libraries(core
+    PRIVATE 
+        cugraph::cugraph 
+        rmm::rmm 
+        raft::raft
+        OpenMP::OpenMP_CXX
+        csr
+)
+
+add_executable(core64 core.cu)
+target_compile_options(core64 PRIVATE "-O3" "-DKC_EDGE64")
+target_link_libraries(core64
+    PRIVATE 
+        cugraph::cugraph 
+        rmm::rmm 
+        raft::raft
+        OpenMP::OpenMP_CXX
+        csr
+)

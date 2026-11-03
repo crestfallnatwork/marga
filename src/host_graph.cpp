@@ -146,10 +146,15 @@ MtxHeader parse_header(const char* start, const char* end)
 constexpr uint32_t kCacheMagic   = 0x4D435331; // 'MCS1'
 constexpr uint32_t kCacheVersion = 2;
 
-std::string cache_path(const std::string& file, bool sym, GraphLayout layout)
+std::string cache_path(const std::string& file, bool sym, GraphLayout layout, bool drop_self_loops)
 {
     const char* suffix = (layout == GraphLayout::CSC) ? ".cscbin" : ".csrbin";
-    return sym ? file + ".sym" + suffix : file + suffix;
+    std::string path   = file;
+    if (sym)
+        path += ".sym";
+    if (drop_self_loops)
+        path += ".noself";
+    return path + suffix;
 }
 
 } // namespace
@@ -207,7 +212,8 @@ HostGraph load_binary(const std::string& path)
     return g;
 }
 
-HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layout, bool use_cache)
+HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layout, bool use_cache,
+                     bool drop_self_loops)
 {
     MappedFile mf(file);
     const char* start = static_cast<const char*>(mf.data);
@@ -219,7 +225,7 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
 
     if (use_cache) {
         try {
-            HostGraph cached = load_binary(cache_path(file, force_symmetric, layout));
+            HostGraph cached = load_binary(cache_path(file, force_symmetric, layout, drop_self_loops));
             if (cached.symmetrized == force_symmetric)
                 return cached;
         } catch (...) {
@@ -344,7 +350,9 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
     for (auto& t : threads)
         t.join();
 
-    // Sort + deduplicate each adjacency list, compacting into new arrays.
+    // Sort + deduplicate each adjacency list, compacting into new arrays. The
+    // self-loop entries (u == v) are dropped here, after symmetrization and
+    // deduplication, so a loop contributes to neither the degree nor the view.
     std::vector<uint64_t> unique_len(n, 0);
     {
         std::vector<std::thread> workers;
@@ -356,8 +364,10 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
                 if (e > b) {
                     scratch.assign(g.column_indices.begin() + b, g.column_indices.begin() + e);
                     std::sort(scratch.begin(), scratch.end());
-                    const auto last = std::unique(scratch.begin(), scratch.end());
-                    unique_len[v]   = (uint64_t)(last - scratch.begin());
+                    auto last = std::unique(scratch.begin(), scratch.end());
+                    if (drop_self_loops)
+                        last = std::remove(scratch.begin(), last, static_cast<uint32_t>(v));
+                    unique_len[v] = (uint64_t)(last - scratch.begin());
                     std::copy(scratch.begin(), last, g.column_indices.begin() + b);
                 }
             }
@@ -400,7 +410,7 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
 
     if (use_cache) {
         try {
-            save_binary(g, cache_path(file, force_symmetric, layout));
+            save_binary(g, cache_path(file, force_symmetric, layout, drop_self_loops));
         } catch (...) {
             // caching is best-effort
         }

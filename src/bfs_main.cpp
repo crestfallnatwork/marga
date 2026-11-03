@@ -25,6 +25,7 @@ int main(int argc, char* argv[])
     uint32_t src_vertex = 0;
     std::string vertices_file;
     bool validate = false;
+    bool drop_self_loops = false;
 
     auto cli = (value("graph file", graph_file),
                 ((option("-s", "--src") & value("source vertex", src_vertex)) %
@@ -32,7 +33,9 @@ int main(int argc, char* argv[])
                  (option("-f", "--file") & value("vertices file", vertices_file)) %
                      "file containing source vertices (one per line)"),
                 option("-v", "--validate").set(validate) %
-                    "validate GPU results against parallel CPU BFS");
+                    "validate GPU results against parallel CPU BFS",
+                option("--drop-self-loops").set(drop_self_loops) %
+                    "remove u == v entries after import (simple-graph view)");
 
     if (parse(argc, argv, cli)) {
         auto ctx_res = pictor::Context::create();
@@ -44,7 +47,9 @@ int main(int argc, char* argv[])
 
         std::cout << "Importing graph: " << graph_file << "..." << std::endl;
         auto import_start = std::chrono::high_resolution_clock::now();
-        auto g            = pictor::graphs::Graph::import(ctx, graph_file);
+        auto g            = pictor::graphs::Graph::import(ctx, graph_file, false,
+                                                           pictor::graphs::GraphLayout::CSR,
+                                                           drop_self_loops);
         auto import_end   = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> import_elapsed = import_end - import_start;
         std::cout << "Import took: " << import_elapsed.count() << "s" << std::endl;

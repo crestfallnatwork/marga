@@ -21,6 +21,7 @@ int main(int argc, char* argv[])
     std::string graph_file;
     bool        validate = false;
     bool        sym      = false;
+    bool        drop_self_loops = false;
     uint32_t    num_runs = 1;
 
     auto cli = group(
@@ -30,7 +31,9 @@ int main(int argc, char* argv[])
         option("-v", "--validate").set(validate) %
             "validate GPU components against a CPU union-find",
         option("-s", "--sym").set(sym) %
-            "symmetric view: import symmetrized and process each undirected edge once");
+            "symmetric view: import symmetrized and process each undirected edge once",
+        option("--drop-self-loops").set(drop_self_loops) %
+            "remove u == v entries after import (simple-graph view)");
 
     if (!parse(argc, argv, cli)) {
         std::cout << make_man_page(cli, argv[0]);
@@ -46,7 +49,8 @@ int main(int argc, char* argv[])
 
     std::cout << "Importing graph as CSR: " << graph_file << "..." << std::endl;
     const auto import_t0 = high_resolution_clock::now();
-    auto g = pictor::graphs::Graph::import(ctx, graph_file, sym, pictor::graphs::GraphLayout::CSR);
+    auto g = pictor::graphs::Graph::import(ctx, graph_file, sym, pictor::graphs::GraphLayout::CSR,
+                                           drop_self_loops);
     std::cout << std::format("Import: {:.3f} ms\n",
                              duration<double, std::milli>(high_resolution_clock::now() - import_t0)
                                  .count());

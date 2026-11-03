@@ -102,9 +102,9 @@ void Graph::upload_host_graph(const HostGraph& host)
 }
 
 Graph Graph::import(Context& ctx, std::string const& file, bool symmetrize,
-                    GraphLayout target_layout)
+                    GraphLayout target_layout, bool drop_self_loops)
 {
-    const HostGraph host = import_mtx(file, symmetrize, target_layout);
+    const HostGraph host = import_mtx(file, symmetrize, target_layout, false, drop_self_loops);
 
     Graph g(&ctx);
     g.num_vertices = host.num_vertices;
