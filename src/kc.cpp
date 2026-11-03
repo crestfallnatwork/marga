@@ -285,8 +285,12 @@ uint64_t KC::run(Graph const& g, uint32_t phases_per_submit)
         seed_mesh_runs_ = ct[cSeedMeshRuns];
 
         if (probe_ && seed_mesh_runs_ != 0) {
-            std::fprintf(stderr, "kc: %u mesh groups ran during seed phases\n", seed_mesh_runs_);
-            std::exit(1);
+            // Not an error: NVIDIA 580.95.05 launches mesh work for a
+            // zero-group amplification dispatch. The mesh stage returns on the
+            // seed mode, so those groups do no work.
+            std::fprintf(stderr,
+                         "kc: %u mesh groups launched during seed phases (driver-dependent)\n",
+                         seed_mesh_runs_);
         }
 
         if (trace) {

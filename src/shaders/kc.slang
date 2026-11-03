@@ -200,7 +200,9 @@ void kc_task(
 }
 
 // Cascade only: one thread per out-edge, one test-and-claim per live target.
-// Seed phases dispatch zero mesh groups, so this stage never sees a seed.
+// Seed phases dispatch zero mesh groups; if a driver launches mesh work for
+// that dispatch anyway, the groups return before touching any state, so the
+// cull stays in the task stage.
 [shader("mesh")]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
@@ -213,6 +215,15 @@ void kc_mesh(
 ) {
     if (kcIn.probe != 0 && lid == 0) {
         InterlockedAdd(*Splice(kcIn.counters, cMeshRuns), 1u);
+    }
+
+    // NVIDIA 580.95.05 launches mesh workgroups for a zero-group amplification
+    // dispatch, so a seed phase would otherwise run the cascade body. The
+    // phase mode lives in device state, so this check does not depend on
+    // payload delivery.
+    if (uint(At(kcIn.state, cStateMode)) == cModeSeed) {
+        SetMeshOutputCounts(0, 0);
+        return;
     }
 
     uint g     = (gid.y * cMaxMeshDim) + gid.x;
