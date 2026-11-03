@@ -41,6 +41,10 @@ pictor_add_shader(bc_shader src/shaders/bc.slang)
 add_library(pictor_graphs_bc src/bc.cpp src/bc_validation.cpp)
 target_link_libraries(pictor_graphs_bc bc_shader)
 
+pictor_add_shader(kc_shader src/shaders/kc.slang)
+add_library(pictor_graphs_kc src/kc.cpp src/kc_validation.cpp)
+target_link_libraries(pictor_graphs_kc kc_shader)
+
 add_executable(bfs src/bfs_main.cpp)
 target_link_libraries(bfs pictor_graphs pictor_core pictor_graphs_bfs)
 
@@ -55,6 +59,9 @@ target_link_libraries(cc pictor_graphs pictor_core pictor_graphs_cc)
 
 add_executable(bc src/bc_main.cpp)
 target_link_libraries(bc pictor_graphs pictor_core pictor_graphs_bc)
+
+add_executable(kc src/kc_main.cpp)
+target_link_libraries(kc pictor_graphs pictor_core pictor_graphs_kc)
 
 add_executable(gen_vertices src/gen_vertices.cpp)
 target_link_libraries(gen_vertices pictor_graphs pictor_core)
