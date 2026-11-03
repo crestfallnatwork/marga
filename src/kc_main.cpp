@@ -150,9 +150,10 @@ int main(int argc, char* argv[])
                                  cmp.mismatches);
 
         const uint32_t k_mid = std::max<uint32_t>(1, cmp.max_core / 2);
-        for (uint32_t k : {k_mid, cmp.max_core, k_core}) {
-            if (k == 0)
-                continue;
+        std::vector<uint32_t> ks{k_mid, cmp.max_core};
+        if (k_core != 0 && k_core != k_mid && k_core != cmp.max_core)
+            ks.push_back(k_core);
+        for (uint32_t k : ks) {
             uint64_t members = 0, min_degree = 0;
             const bool ok = pictor::graphs::KCValidator::verify_k_core(
                 g.row_offsets, g.column_indices, core, k, members, min_degree);
