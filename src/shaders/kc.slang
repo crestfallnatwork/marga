@@ -10,12 +10,13 @@
 // A device-side phase chain drives the sweep (as bc's level chain does):
 //  1. kc_step_compute consumes the previous phase's claims. If there are any,
 //     the next phase is a cascade wave over them; otherwise k advances and the
-//     next phase partitions the surviving vertices, seeding the cascade.
-//  2. the work phase is one task/mesh dispatch. In cascade mode a task lane
-//     takes one frontier vertex and sizes its row; the mesh stage tests each
+//     next phase seeds the cascade from the surviving vertices.
+//  2. the work phase is one task dispatch. In cascade mode a task lane takes
+//     one frontier vertex and sizes its row; the mesh stage tests each
 //     out-edge, decrements the live neighbour and claims it once its degree
-//     reaches k. In seed mode an item is one surviving vertex, repartitioned
-//     into the next survivor list or removed into the frontier.
+//     reaches k. In seed mode the task stage itself culls the survivor list
+//     (removing a threshold's worth of vertices) and dispatches zero mesh
+//     groups, so the culled work never reaches the rasterizer.
 // The host submits batches of phases and only reads the state between batches.
 
 static const uint cMaxMeshDim   = 65535;
@@ -42,13 +43,17 @@ static const uint cStateCapacity  = 8;  // frontier capacity in entries
 static const uint cStateSeedSrc   = 9;  // survivor list this seed reads
 static const uint cStatePhases    = 10;
 static const uint cStatePeak      = 11;
+static const uint cStatePrevMode  = 12;  // mode of the phase that just ran (probe)
+static const uint cStateMeshRuns  = 13;  // mesh-group counter at the last step (probe)
 
 // Counters, u32.
-static const uint cClaims   = 0;  // this phase's removed vertices
-static const uint cKept     = 1;  // survivor list written by the last seed
-static const uint cMinDeg   = 2;  // smallest degree kept by the last seed
-static const uint cOverflow = 3;  // frontier capacity violations
-static const uint cSeeds    = 4;  // threshold seeds the sweep has started
+static const uint cClaims       = 0;  // this phase's removed vertices
+static const uint cKept         = 1;  // survivor list written by the last seed
+static const uint cMinDeg       = 2;  // smallest degree kept by the last seed
+static const uint cOverflow     = 3;  // frontier capacity violations
+static const uint cSeeds        = 4;  // threshold seeds the sweep has started
+static const uint cMeshRuns     = 5;  // mesh groups entered (probe only)
+static const uint cSeedMeshRuns = 6;  // mesh groups entered in a seed phase (probe only)
 
 T At<T>(T* ptr, uint64_t offset) {
     return *(T*)(uint64_t(ptr) + sizeof(T) * offset);
@@ -59,10 +64,7 @@ T* Splice<T>(T* ptr, uint64_t offset) {
 
 struct SharedKCPayload {
     uint offsets[cGroupItems + 1];
-    // Copy of the step's phase choice, so the mesh stage does not re-read it.
-    uint  mode;
     uint  k;
-    uint  seed_src;
     uint64_t base;
 };
 groupshared SharedKCPayload kcPayload;
@@ -80,15 +82,20 @@ struct KCIn {
     uint32_t* frontier;
     uint64_t  num_vertices;
     uint64_t  stride;
+    // Debug: count mesh groups that actually run (and flag any that run in a
+    // seed phase). Off in the benchmark path.
+    uint32_t  probe;
 };
 // @bind(kc_task)
 // @bind(kc_init_compute)
 [[vk::push_constant]]
 uniform KCIn kcIn;
 
-// One work item per frontier vertex (cascade) or per surviving vertex (seed).
-// The payload is the per-item edge prefix sum; the mesh stage maps its edge id
-// back to the item with a binary search over it.
+// One work item per frontier vertex in cascade mode, or one surviving vertex
+// per item in seed mode. The cascade payload is the per-item edge prefix sum;
+// the mesh stage maps its edge id back to the item with a binary search over
+// it. The seed is a pure cull: the task stage removes the threshold's vertices
+// and returns a zero mesh dispatch.
 [shader("amplification")]
 [numthreads(WAVE_SIZE, 1, 1)]
 void kc_task(
@@ -99,18 +106,65 @@ void kc_task(
     uint64_t group_base = uint64_t(g) * cGroupItems;
 
     uint mode = uint(At(kcIn.state, cStateMode));
+    uint k    = uint(At(kcIn.state, cStateK));
     uint count = (mode == cModeSeed) ? uint(At(kcIn.state, cStateSurvivors))
                                      : uint(At(kcIn.state, cStateCount));
     uint64_t base = At(kcIn.state, cStateBase);
 
     if (lid == 0) {
-        kcPayload.mode     = mode;
-        kcPayload.k        = uint(At(kcIn.state, cStateK));
-        kcPayload.seed_src = uint(At(kcIn.state, cStateSeedSrc));
+        kcPayload.k = k;
         // The mesh stage restarts its group ids with every DispatchMesh, so the
-        // payload carries this task group's first item. A seed scans the whole
-        // survivor list from the front.
-        kcPayload.base     = (mode == cModeSeed) ? group_base : (base + group_base);
+        // payload carries this task group's first frontier item.
+        kcPayload.base = base + group_base;
+    }
+
+    if (mode == cModeSeed) {
+        uint  src_idx = uint(At(kcIn.state, cStateSeedSrc));
+        uint* src     = (src_idx != 0) ? kcIn.survivors1 : kcIn.survivors0;
+        uint* dst     = (src_idx != 0) ? kcIn.survivors0 : kcIn.survivors1;
+
+        uint64_t next_base = At(kcIn.state, cStateNext);
+        uint64_t capacity  = At(kcIn.state, cStateCapacity);
+
+        [unroll]
+        for (uint i = 0; i < cItemsPerLane; ++i) {
+            uint64_t local = group_base + i * WAVE_SIZE + lid;
+            if (local < count) {
+                uint v = At(src, local);
+
+                uint word = v >> 5;
+                uint mask = 1u << (v & 31);
+
+                // A cascade of the previous threshold may already have claimed
+                // it, and the survivor list is only compacted by a seed.
+                if ((At(kcIn.removed, word) & mask) == 0) {
+                    uint d = At(kcIn.deg, v);
+                    if (d <= k) {
+                        uint previous = 0;
+                        InterlockedOr(*Splice(kcIn.removed, word), mask, previous);
+                        if ((previous & mask) == 0) {
+                            *Splice(kcIn.core, v) = k;
+                            uint slot = 0;
+                            InterlockedAdd(*Splice(kcIn.counters, cClaims), 1u, slot);
+                            uint64_t pos = next_base + uint64_t(slot);
+                            if (pos < capacity) {
+                                *Splice(kcIn.frontier, pos) = v;
+                            } else {
+                                InterlockedAdd(*Splice(kcIn.counters, cOverflow), 1u);
+                            }
+                        }
+                    } else {
+                        uint slot = 0;
+                        InterlockedAdd(*Splice(kcIn.counters, cKept), 1u, slot);
+                        *Splice(dst, slot) = v;
+                        InterlockedMin(*Splice(kcIn.counters, cMinDeg), d);
+                    }
+                }
+            }
+        }
+
+        DispatchMesh(0, 1, 1, kcPayload);
+        return;
     }
 
     uint running = 0;
@@ -121,12 +175,9 @@ void kc_task(
 
         uint degree = 0;
         if (local < count) {
-            degree = 1;
-            if (mode == cModeCascade) {
-                uint u      = At(kcIn.frontier, base + local);
-                uint64_t s  = At(kcIn.row_offsets, u);
-                degree      = uint(At(kcIn.row_offsets, uint64_t(u) + 1) - s);
-            }
+            uint u     = At(kcIn.frontier, base + local);
+            uint64_t s = At(kcIn.row_offsets, u);
+            degree     = uint(At(kcIn.row_offsets, uint64_t(u) + 1) - s);
         }
 
         uint prefix = WavePrefixSum(degree);
@@ -148,6 +199,8 @@ void kc_task(
     DispatchMesh(mesh_x, mesh_y, 1, kcPayload);
 }
 
+// Cascade only: one thread per out-edge, one test-and-claim per live target.
+// Seed phases dispatch zero mesh groups, so this stage never sees a seed.
 [shader("mesh")]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
@@ -158,6 +211,10 @@ void kc_mesh(
     out vertices float4 vertices[1],
     out indices uint indices[1]
 ) {
+    if (kcIn.probe != 0 && lid == 0) {
+        InterlockedAdd(*Splice(kcIn.counters, cMeshRuns), 1u);
+    }
+
     uint g     = (gid.y * cMaxMeshDim) + gid.x;
     uint edge  = g * cMeshGroup + lid;
     uint total = inPayload.offsets[cGroupItems];
@@ -177,79 +234,42 @@ void kc_mesh(
 
     uint k = inPayload.k;
 
-    if (inPayload.mode == cModeSeed) {
-        uint* src = (inPayload.seed_src != 0) ? kcIn.survivors1 : kcIn.survivors0;
-        uint* dst = (inPayload.seed_src != 0) ? kcIn.survivors0 : kcIn.survivors1;
-        uint  v   = At(src, inPayload.base + uint64_t(item));
+    uint     u   = At(kcIn.frontier, inPayload.base + uint64_t(item));
+    uint64_t eid = At(kcIn.row_offsets, u) + uint64_t(edge - inPayload.offsets[item]);
+    uint     w   = At(kcIn.column_indices, eid);
 
-        uint word = v >> 5;
-        uint mask = 1u << (v & 31);
+    // Self-loops are removed by the importer; skip any that remain.
+    if (w == u) {
+        SetMeshOutputCounts(0, 0);
+        return;
+    }
 
-        // A cascade of the previous threshold may already have claimed it.
-        if ((At(kcIn.removed, word) & mask) != 0) {
-            SetMeshOutputCounts(0, 0);
-            return;
-        }
+    uint word = w >> 5;
+    uint mask = 1u << (w & 31);
+    if ((At(kcIn.removed, word) & mask) != 0) {
+        SetMeshOutputCounts(0, 0);
+        return;
+    }
 
-        uint d = At(kcIn.deg, v);
-        if (d <= k) {
-            uint previous = 0;
-            InterlockedOr(*Splice(kcIn.removed, word), mask, previous);
-            if ((previous & mask) == 0) {
-                *Splice(kcIn.core, v) = k;
-                uint slot = 0;
-                InterlockedAdd(*Splice(kcIn.counters, cClaims), 1u, slot);
-                uint64_t pos = At(kcIn.state, cStateNext) + uint64_t(slot);
-                if (pos < At(kcIn.state, cStateCapacity)) {
-                    *Splice(kcIn.frontier, pos) = v;
-                } else {
-                    InterlockedAdd(*Splice(kcIn.counters, cOverflow), 1u);
-                }
-            }
-        } else {
+    // The returned value is the degree before this decrement. Racing
+    // decrements can only push it further down; the claim below is still
+    // taken exactly once.
+    uint old = 0;
+    InterlockedAdd(*Splice(kcIn.deg, w), cMinusOne, old);
+    uint next = old - 1u;
+
+    if (next <= k) {
+        uint previous = 0;
+        InterlockedOr(*Splice(kcIn.removed, word), mask, previous);
+        if ((previous & mask) == 0) {
+            *Splice(kcIn.core, w) = k;
             uint slot = 0;
-            InterlockedAdd(*Splice(kcIn.counters, cKept), 1u, slot);
-            *Splice(dst, slot) = v;
-            InterlockedMin(*Splice(kcIn.counters, cMinDeg), d);
-        }
-    } else {
-        uint     u   = At(kcIn.frontier, inPayload.base + uint64_t(item));
-        uint64_t eid = At(kcIn.row_offsets, u) + uint64_t(edge - inPayload.offsets[item]);
-        uint     w   = At(kcIn.column_indices, eid);
-
-        // Self-loops are removed by the importer; skip any that remain.
-        if (w == u) {
-            SetMeshOutputCounts(0, 0);
-            return;
-        }
-
-        uint word = w >> 5;
-        uint mask = 1u << (w & 31);
-        if ((At(kcIn.removed, word) & mask) != 0) {
-            SetMeshOutputCounts(0, 0);
-            return;
-        }
-
-        // The returned value is the degree before this decrement. Racing
-        // decrements can only push it further down; the claim below is still
-        // taken exactly once.
-        uint old = 0;
-        InterlockedAdd(*Splice(kcIn.deg, w), cMinusOne, old);
-        uint next = old - 1u;
-
-        if (next <= k) {
-            uint previous = 0;
-            InterlockedOr(*Splice(kcIn.removed, word), mask, previous);
-            if ((previous & mask) == 0) {
-                *Splice(kcIn.core, w) = k;
-                uint slot = 0;
-                InterlockedAdd(*Splice(kcIn.counters, cClaims), 1u, slot);
-                uint64_t pos = At(kcIn.state, cStateNext) + uint64_t(slot);
-                if (pos < At(kcIn.state, cStateCapacity)) {
-                    *Splice(kcIn.frontier, pos) = w;
-                } else {
-                    InterlockedAdd(*Splice(kcIn.counters, cOverflow), 1u);
-                }
+            InterlockedAdd(*Splice(kcIn.counters, cClaims), 1u, slot);
+            uint64_t pos = At(kcIn.state, cStateNext) + uint64_t(slot);
+            if (pos < At(kcIn.state, cStateCapacity)) {
+                *Splice(kcIn.frontier, pos) = w;
+            } else {
+                InterlockedAdd(*Splice(kcIn.counters, cOverflow), 1u);
             }
         }
     }
@@ -294,6 +314,9 @@ struct KCStepIn {
     uint64_t* state;
     uint32_t* counters;
     uint32_t* grid;
+    // Debug: check that no mesh group ran during the phase that just finished
+    // when that phase was a seed.
+    uint32_t probe;
 };
 // @bind(kc_step_compute)
 [[vk::push_constant]]
@@ -303,6 +326,18 @@ uniform KCStepIn kcStepIn;
 [numthreads(1, 1, 1)]
 void kc_step_compute(uint3 tid : SV_DispatchThreadID) {
     uint32_t* grid = kcStepIn.grid;
+
+    if (kcStepIn.probe != 0) {
+        uint64_t runs = uint64_t(At(kcStepIn.counters, cMeshRuns));
+        uint64_t prev = At(kcStepIn.state, cStateMeshRuns);
+        if (At(kcStepIn.state, cStatePrevMode) == cModeSeed) {
+            // Mesh groups that ran during the seed phase just completed. A seed
+            // dispatches zero, so this must stay at zero.
+            *Splice(kcStepIn.counters, cSeedMeshRuns) =
+                At(kcStepIn.counters, cSeedMeshRuns) + uint(runs - prev);
+        }
+        *Splice(kcStepIn.state, cStateMeshRuns) = runs;
+    }
 
     if (At(kcStepIn.state, cStateDone) != 0) {
         grid[0] = 0;
@@ -376,4 +411,8 @@ void kc_step_compute(uint3 tid : SV_DispatchThreadID) {
     grid[0] = uint(gx);
     grid[1] = uint(gy);
     grid[2] = 1;
+
+    // Remember which phase this step just launched so the probe can attribute
+    // the next interval's mesh groups to it.
+    *Splice(kcStepIn.state, cStatePrevMode) = At(kcStepIn.state, cStateMode);
 }

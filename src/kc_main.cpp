@@ -122,6 +122,11 @@ int main(int argc, char* argv[])
     std::cout << std::format("  Max core:          {}\n", max_core);
     std::cout << std::format("  Frontier entries:  {} of {} ({:.2f} GiB)\n", peak,
                              kc.vertex_count(), static_cast<double>(peak) * 4.0 / 1073741824.0);
+    if (kc.probe_enabled()) {
+        std::cout << std::format("  Mesh probe:        {} mesh groups ran, {} during seed phases "
+                                 "(must be 0)\n",
+                                 kc.mesh_runs(), kc.seed_mesh_runs());
+    }
 
     if (!dump_core.empty() && !core.empty()) {
         std::ofstream out(dump_core, std::ios::binary);

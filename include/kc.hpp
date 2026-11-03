@@ -64,6 +64,21 @@ class KC {
         return num_vertices_;
     }
 
+    // Debug (MARGA_KC_MESH_PROBE): mesh groups that ran, and how many of them
+    // ran during a seed phase (must be zero — a seed dispatches no mesh work).
+    uint64_t mesh_runs() const
+    {
+        return mesh_runs_;
+    }
+    uint32_t seed_mesh_runs() const
+    {
+        return seed_mesh_runs_;
+    }
+    bool probe_enabled() const
+    {
+        return probe_;
+    }
+
     using WorkExec = kc_shader::KCExecutor;
     using WorkIn   = kc_shader::KCIn;
     using InitExec = kc_shader::KcInitComputeExecutor;
@@ -94,14 +109,17 @@ class KC {
     AllocationInfo h_counters{};
     AllocationInfo h_core{};
 
-    uint64_t num_vertices_  = 0;
-    uint64_t frontier_cap_  = 0;
-    uint64_t phases_        = 0;
-    uint64_t frontier_peak_ = 0;
-    uint32_t max_core_      = 0;
-    uint32_t thresholds_    = 0;
-    double init_ms_         = 0.0;
-    double loop_ms_         = 0.0;
+    uint64_t num_vertices_   = 0;
+    uint64_t frontier_cap_   = 0;
+    uint64_t phases_         = 0;
+    uint64_t frontier_peak_  = 0;
+    uint32_t max_core_       = 0;
+    uint32_t thresholds_     = 0;
+    uint64_t mesh_runs_      = 0;
+    uint32_t seed_mesh_runs_ = 0;
+    bool probe_              = false;
+    double init_ms_          = 0.0;
+    double loop_ms_          = 0.0;
 };
 
 } // namespace graphs

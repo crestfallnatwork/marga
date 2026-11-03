@@ -36,14 +36,18 @@ constexpr size_t cStateCapacity  = 8;
 constexpr size_t cStateSeedSrc   = 9;
 constexpr size_t cStatePhases    = 10;
 constexpr size_t cStatePeak      = 11;
-constexpr size_t cStateSlots     = 12;
+constexpr size_t cStatePrevMode  = 12;
+constexpr size_t cStateMeshRuns  = 13;
+constexpr size_t cStateSlots     = 14;
 
-constexpr size_t cClaims   = 0;
-constexpr size_t cKept     = 1;
-constexpr size_t cMinDeg   = 2;
-constexpr size_t cOverflow = 3;
-constexpr size_t cSeeds    = 4;
-constexpr size_t cCounters = 8;
+constexpr size_t cClaims       = 0;
+constexpr size_t cKept         = 1;
+constexpr size_t cMinDeg       = 2;
+constexpr size_t cOverflow     = 3;
+constexpr size_t cSeeds        = 4;
+constexpr size_t cMeshRuns     = 5;
+constexpr size_t cSeedMeshRuns = 6;
+constexpr size_t cCounters     = 8;
 
 using State    = std::array<uint64_t, cStateSlots>;
 using Counters = std::array<uint32_t, cCounters>;
@@ -171,6 +175,7 @@ void KC::initialise(Graph const& g)
         .frontier       = reinterpret_cast<uint32_t*>(d_frontier.address),
         .num_vertices   = g.num_vertices,
         .stride         = stride,
+        .probe          = 0,
     };
     init_exec->record(static_cast<uint32_t>(stride), gy, 1, initIn);
 
@@ -187,13 +192,16 @@ uint64_t KC::run(Graph const& g, uint32_t phases_per_submit)
     using namespace std::chrono;
 
     release();
-    phases_        = 0;
-    frontier_peak_ = 0;
-    max_core_      = 0;
-    thresholds_    = 0;
-    num_vertices_  = g.num_vertices;
-    init_ms_       = 0.0;
-    loop_ms_       = 0.0;
+    phases_         = 0;
+    frontier_peak_  = 0;
+    max_core_       = 0;
+    thresholds_     = 0;
+    mesh_runs_      = 0;
+    seed_mesh_runs_ = 0;
+    probe_          = std::getenv("MARGA_KC_MESH_PROBE") != nullptr;
+    num_vertices_   = g.num_vertices;
+    init_ms_        = 0.0;
+    loop_ms_        = 0.0;
     if (num_vertices_ == 0)
         return 0;
 
@@ -218,11 +226,13 @@ uint64_t KC::run(Graph const& g, uint32_t phases_per_submit)
         .frontier       = reinterpret_cast<uint32_t*>(d_frontier.address),
         .num_vertices   = num_vertices_,
         .stride         = 0,
+        .probe          = probe_ ? 1u : 0u,
     };
     StepIn stepIn = {
         .state    = reinterpret_cast<uint64_t*>(d_state.address),
         .counters = reinterpret_cast<uint32_t*>(d_counters.address),
         .grid     = reinterpret_cast<uint32_t*>(d_grid.address),
+        .probe    = probe_ ? 1u : 0u,
     };
 
     const uint32_t batch = std::max<uint32_t>(1, phases_per_submit);
@@ -267,10 +277,17 @@ uint64_t KC::run(Graph const& g, uint32_t phases_per_submit)
         const auto* st = reinterpret_cast<const uint64_t*>(h_state.mappedPtr);
         const auto* ct = reinterpret_cast<const uint32_t*>(h_counters.mappedPtr);
 
-        done           = st[cStateDone] != 0;
-        phases_        = st[cStatePhases];
-        frontier_peak_ = st[cStatePeak];
-        thresholds_    = ct[cSeeds];
+        done            = st[cStateDone] != 0;
+        phases_         = st[cStatePhases];
+        frontier_peak_  = st[cStatePeak];
+        thresholds_     = ct[cSeeds];
+        mesh_runs_      = ct[cMeshRuns];
+        seed_mesh_runs_ = ct[cSeedMeshRuns];
+
+        if (probe_ && seed_mesh_runs_ != 0) {
+            std::fprintf(stderr, "kc: %u mesh groups ran during seed phases\n", seed_mesh_runs_);
+            std::exit(1);
+        }
 
         if (trace) {
             std::fprintf(stderr,
