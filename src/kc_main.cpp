@@ -23,28 +23,27 @@ int main(int argc, char* argv[])
     using namespace std::chrono;
 
     std::string graph_file;
-    bool        validate         = false;
-    bool        keep_self_loops  = false;
-    uint32_t    num_runs         = 1;
-    uint32_t    phases_per_submit = 32;
-    uint32_t    k_core           = 0;
+    bool validate              = false;
+    bool keep_self_loops       = false;
+    uint32_t num_runs          = 1;
+    uint32_t phases_per_submit = 32;
+    uint32_t k_core            = 0;
     std::string dump_core;
 
-    auto cli = group(
-        value("graph file", graph_file) % "MTX graph file to process",
-        (option("-n", "--num-runs") & value("number of runs", num_runs)) %
-            "number of times to run the benchmark",
-        (option("-b", "--batch") & value("phases per submit", phases_per_submit)) %
-            "device phases per host submission (1 = one fence wait per phase)",
-        (option("--k-core") & value("k", k_core)) %
-            "also check the k-core subgraph for this k (0: pick two from the result)",
-        (option("--dump-core") & value("path", dump_core)) %
-            "write the core numbers as a raw uint32 array (for cross-system checks)",
-        option("-v", "--validate").set(validate) %
-            "validate GPU core numbers against the exact CPU decomposition",
-        option("--keep-self-loops").set(keep_self_loops) %
-            "keep u == v entries (default: dropped, matching the undirected "
-            "simple-graph definition)");
+    auto cli = group(value("graph file", graph_file) % "MTX graph file to process",
+                     (option("-n", "--num-runs") & value("number of runs", num_runs)) %
+                         "number of times to run the benchmark",
+                     (option("-b", "--batch") & value("phases per submit", phases_per_submit)) %
+                         "device phases per host submission (1 = one fence wait per phase)",
+                     (option("--k-core") & value("k", k_core)) %
+                         "also check the k-core subgraph for this k (0: pick two from the result)",
+                     (option("--dump-core") & value("path", dump_core)) %
+                         "write the core numbers as a raw uint32 array (for cross-system checks)",
+                     option("-v", "--validate").set(validate) %
+                         "validate GPU core numbers against the exact CPU decomposition",
+                     option("--keep-self-loops").set(keep_self_loops) %
+                         "keep u == v entries (default: dropped, matching the undirected "
+                         "simple-graph definition)");
 
     if (!parse(argc, argv, cli)) {
         std::cout << make_man_page(cli, argv[0]);
@@ -62,28 +61,27 @@ int main(int argc, char* argv[])
     const auto import_t0 = high_resolution_clock::now();
     auto g = pictor::graphs::Graph::import(ctx, graph_file, true, pictor::graphs::GraphLayout::CSR,
                                            !keep_self_loops);
-    std::cout << std::format("Import: {:.3f} ms\n",
-                             duration<double, std::milli>(high_resolution_clock::now() - import_t0)
-                                 .count());
+    std::cout << std::format(
+        "Import: {:.3f} ms\n",
+        duration<double, std::milli>(high_resolution_clock::now() - import_t0).count());
 
-    size_t free_mem = ctx.get_device_free_memory() * 0.95;
-    auto   dev_allocator =
-        std::move(pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val());
-    auto host_allocator =
-        std::move(pictor::HeapAllocator::create(&ctx, ctx.root_pinned_allocator.get(), free_mem).val());
+    size_t free_mem    = ctx.get_device_free_memory() * 0.95;
+    auto dev_allocator = std::move(
+        pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val());
+    auto host_allocator = std::move(
+        pictor::HeapAllocator::create(&ctx, ctx.root_pinned_allocator.get(), free_mem).val());
     ctx.set_device_allocator(std::move(dev_allocator));
     ctx.set_host_allocator(std::move(host_allocator));
 
     std::cout << std::format("Graph: {} vertices, {} edges (symmetric view, self-loops {})\n",
-                             g.num_vertices, g.num_edges,
-                             keep_self_loops ? "kept" : "dropped");
+                             g.num_vertices, g.num_edges, keep_self_loops ? "kept" : "dropped");
     std::cout << std::format("Device pool: {:.2f} GiB\n", free_mem / 1073741824.0);
 
     pictor::graphs::KC kc(ctx);
 
-    double   total_ms = 0.0;
-    double   loop_ms  = 0.0;
-    double   init_ms  = 0.0;
+    double total_ms   = 0.0;
+    double loop_ms    = 0.0;
+    double init_ms    = 0.0;
     uint64_t phases   = 0;
     uint32_t seeds    = 0;
     uint32_t max_core = 0;
@@ -136,8 +134,7 @@ int main(int argc, char* argv[])
     if (validate) {
         std::cout << "Running CPU Validation..." << std::endl;
         const auto val_t0 = high_resolution_clock::now();
-        const auto cpu =
-            pictor::graphs::KCValidator::compute(g.row_offsets, g.column_indices);
+        const auto cpu    = pictor::graphs::KCValidator::compute(g.row_offsets, g.column_indices);
         const double val_ms =
             duration<double, std::milli>(high_resolution_clock::now() - val_t0).count();
 
@@ -159,14 +156,12 @@ int main(int argc, char* argv[])
             uint64_t members = 0, min_degree = 0;
             const bool ok = pictor::graphs::KCValidator::verify_k_core(
                 g.row_offsets, g.column_indices, core, k, members, min_degree);
-            std::cout << std::format(
-                "  {}-core: {} vertices, min induced degree {}{}\n", k, members, min_degree,
-                ok ? "" : " (NOT a k-core)");
+            std::cout << std::format("  {}-core: {} vertices, min induced degree {}{}\n", k,
+                                     members, min_degree, ok ? "" : " (NOT a k-core)");
         }
 
-        std::cout << (cmp.mismatches == 0
-                          ? "SUCCESS: GPU and CPU core numbers match exactly.\n"
-                          : "FAILURE: GPU and CPU core numbers differ.\n");
+        std::cout << (cmp.mismatches == 0 ? "SUCCESS: GPU and CPU core numbers match exactly.\n"
+                                          : "FAILURE: GPU and CPU core numbers differ.\n");
         if (cmp.mismatches != 0)
             return 2;
     }

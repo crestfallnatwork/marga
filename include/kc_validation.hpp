@@ -17,17 +17,17 @@ class KCValidator {
   public:
     struct Result {
         std::vector<uint32_t> core;
-        uint32_t              max_core = 0;
-        uint64_t              isolated = 0;
+        uint32_t max_core = 0;
+        uint64_t isolated = 0;
     };
 
     struct Comparison {
-        uint64_t checked     = 0;
-        uint64_t mismatches  = 0;
+        uint64_t checked      = 0;
+        uint64_t mismatches   = 0;
         uint64_t first_vertex = 0;
-        uint32_t first_gpu   = 0;
-        uint32_t first_cpu   = 0;
-        uint32_t max_core    = 0;
+        uint32_t first_gpu    = 0;
+        uint32_t first_cpu    = 0;
+        uint32_t max_core     = 0;
     };
 
     // Degrees and core numbers on the symmetric simple view; self-loop entries

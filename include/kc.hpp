@@ -35,13 +35,34 @@ class KC {
     // Core number per vertex, index = vertex id. Only call after run().
     std::vector<uint32_t> copy_core();
 
-    double   init_ms() const { return init_ms_; }
-    double   loop_ms() const { return loop_ms_; }
-    uint64_t phases() const { return phases_; }
-    uint64_t frontier_peak() const { return frontier_peak_; }
-    uint32_t max_core() const { return max_core_; }
-    uint32_t thresholds() const { return thresholds_; }
-    uint64_t vertex_count() const { return num_vertices_; }
+    double init_ms() const
+    {
+        return init_ms_;
+    }
+    double loop_ms() const
+    {
+        return loop_ms_;
+    }
+    uint64_t phases() const
+    {
+        return phases_;
+    }
+    uint64_t frontier_peak() const
+    {
+        return frontier_peak_;
+    }
+    uint32_t max_core() const
+    {
+        return max_core_;
+    }
+    uint32_t thresholds() const
+    {
+        return thresholds_;
+    }
+    uint64_t vertex_count() const
+    {
+        return num_vertices_;
+    }
 
     using WorkExec = kc_shader::KCExecutor;
     using WorkIn   = kc_shader::KCIn;
@@ -79,8 +100,8 @@ class KC {
     uint64_t frontier_peak_ = 0;
     uint32_t max_core_      = 0;
     uint32_t thresholds_    = 0;
-    double   init_ms_       = 0.0;
-    double   loop_ms_       = 0.0;
+    double init_ms_         = 0.0;
+    double loop_ms_         = 0.0;
 };
 
 } // namespace graphs

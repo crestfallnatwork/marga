@@ -21,7 +21,7 @@ namespace graphs {
 
 namespace {
 // Must match kc.slang.
-constexpr uint32_t cGroupItems = 128;
+constexpr uint32_t cGroupItems  = 128;
 constexpr uint32_t cInitThreads = 256;
 
 constexpr size_t cStateK         = 0;
@@ -45,7 +45,7 @@ constexpr size_t cOverflow = 3;
 constexpr size_t cSeeds    = 4;
 constexpr size_t cCounters = 8;
 
-using State = std::array<uint64_t, cStateSlots>;
+using State    = std::array<uint64_t, cStateSlots>;
 using Counters = std::array<uint32_t, cCounters>;
 
 // Context::deallocate does not clear the handle; a stale one would be reused on
@@ -100,12 +100,12 @@ void KC::allocate(uint64_t num_vertices)
 {
     frontier_cap_ = num_vertices + 1;
 
-    d_state    = ctx.pool_allocator->allocate(cStateSlots * sizeof(uint64_t), 0);
-    d_counters = ctx.pool_allocator->allocate(cCounters * sizeof(uint32_t), 0);
-    d_grid     = ctx.pool_allocator->allocate(3 * sizeof(uint32_t), 0);
-    d_deg      = ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), 0);
-    d_core     = ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), 0);
-    d_removed  = ctx.pool_allocator->allocate((num_vertices + 31) / 32 * sizeof(uint32_t), 0);
+    d_state        = ctx.pool_allocator->allocate(cStateSlots * sizeof(uint64_t), 0);
+    d_counters     = ctx.pool_allocator->allocate(cCounters * sizeof(uint32_t), 0);
+    d_grid         = ctx.pool_allocator->allocate(3 * sizeof(uint32_t), 0);
+    d_deg          = ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), 0);
+    d_core         = ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), 0);
+    d_removed      = ctx.pool_allocator->allocate((num_vertices + 31) / 32 * sizeof(uint32_t), 0);
     d_survivors[0] = ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), 0);
     d_survivors[1] = ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), 0);
     d_frontier     = ctx.pool_allocator->allocate(frontier_cap_ * sizeof(uint32_t), 0);
@@ -154,7 +154,7 @@ void KC::initialise(Graph const& g)
                  ResourceBarrier{&d_state, Access::TransferWrite, Access::Read}});
 
     const uint64_t groups = (g.num_vertices + cInitThreads - 1) / cInitThreads;
-    uint32_t       gx, gy;
+    uint32_t gx, gy;
     split_grid(groups, gx, gy);
     const uint64_t stride = static_cast<uint64_t>(gx) * cInitThreads;
 
@@ -226,8 +226,8 @@ uint64_t KC::run(Graph const& g, uint32_t phases_per_submit)
     };
 
     const uint32_t batch = std::max<uint32_t>(1, phases_per_submit);
-    bool           done  = false;
-    const bool     trace = std::getenv("MARGA_KC_TRACE") != nullptr;
+    bool done            = false;
+    const bool trace     = std::getenv("MARGA_KC_TRACE") != nullptr;
 
     // The init pass and its host-side transfer left these in a read state; the
     // first step writes them.

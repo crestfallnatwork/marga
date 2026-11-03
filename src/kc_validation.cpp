@@ -21,7 +21,7 @@ KCValidator::Result KCValidator::compute(std::span<const uint64_t> row_offsets,
     // The bin decomposition keeps the current degree in `core`; when a vertex
     // is processed, that value is its core number.
     std::vector<uint32_t> core(n, 0);
-    uint32_t              max_degree = 0;
+    uint32_t max_degree = 0;
     for (uint64_t v = 0; v < n; ++v) {
         uint32_t d = 0;
         for (uint64_t e = row_offsets[v]; e < row_offsets[v + 1]; ++e)
@@ -48,8 +48,8 @@ KCValidator::Result KCValidator::compute(std::span<const uint64_t> row_offsets,
     {
         std::vector<uint64_t> next(bin.begin(), bin.end());
         for (uint64_t v = 0; v < n; ++v) {
-            pos[v]             = (uint32_t)next[core[v]];
-            vert[pos[v]]       = (uint32_t)v;
+            pos[v]       = (uint32_t)next[core[v]];
+            vert[pos[v]] = (uint32_t)v;
             next[core[v]]++;
         }
     }
@@ -88,8 +88,7 @@ KCValidator::Result KCValidator::compute(std::span<const uint64_t> row_offsets,
     return result;
 }
 
-KCValidator::Comparison KCValidator::compare(std::span<const uint32_t> gpu_core,
-                                             const Result&              cpu)
+KCValidator::Comparison KCValidator::compare(std::span<const uint32_t> gpu_core, const Result& cpu)
 {
     Comparison cmp;
     const uint64_t n = std::min<uint64_t>(gpu_core.size(), cpu.core.size());
