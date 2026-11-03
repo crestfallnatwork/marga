@@ -199,19 +199,23 @@ void tc_mesh(
     uint64_t local_w_idx = threadId - inPayload.offsets[local_eid];
     uint w = At(tcIn.edge_lists, local_w_idx + s_offset);
     uint found_triangle = 0;
-    uint count = b_size;
-    uint low = 0;
-    while(count > 0) {
-        uint step = count / 2;
-        uint mid = low + step;
-        uint mid_val = At(tcIn.edge_lists, mid + b_offset);
-        
-        bool is_less = (mid_val < w);
-        low = is_less ? (mid + 1) : low;
-        count = is_less ? (count - (step + 1)) : step;
-    }
-    if(low < b_size && At(tcIn.edge_lists, low + b_offset) == w) {
-        found_triangle = 1;
+    // Full-list modes intersect N(u) with N(v); the endpoints occur in the
+    // lists when the graph has self-loops and are not triangles.
+    if(tcIn.cull == 2u || (w != u && w != v)) {
+        uint count = b_size;
+        uint low = 0;
+        while(count > 0) {
+            uint step = count / 2;
+            uint mid = low + step;
+            uint mid_val = At(tcIn.edge_lists, mid + b_offset);
+
+            bool is_less = (mid_val < w);
+            low = is_less ? (mid + 1) : low;
+            count = is_less ? (count - (step + 1)) : step;
+        }
+        if(low < b_size && At(tcIn.edge_lists, low + b_offset) == w) {
+            found_triangle = 1;
+        }
     }
 
     uint triangles = WaveActiveSum(found_triangle);
