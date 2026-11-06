@@ -4,6 +4,7 @@
 #include "host_graph.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <charconv>
 #include <cstdio>
@@ -242,12 +243,14 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
     if (num_threads == 0)
         num_threads = 1;
 
-    // Pass 1: per-thread per-vertex degrees (no atomics).
-    std::vector<std::vector<uint64_t>> degrees(num_threads, std::vector<uint64_t>(n + 1, 0));
+    // Pass 1: per-vertex degrees, accumulated atomically. Every thread parses
+    // the same whitespace-delimited arcs, so a single counter array covers all
+    // of them without a per-thread matrix.
+    std::vector<uint64_t> degrees(n + 1, 0);
     const char*  data_ptr  = header.data_start;
     const size_t data_size = (size_t)(end - data_ptr);
 
-    auto count_chunk = [&](const char* c_start, const char* c_end, unsigned tid) {
+    auto count_chunk = [&](const char* c_start, const char* c_end) {
         const char* ptr = c_start;
         while (ptr < c_end) {
             uint64_t u = 0, v = 0;
@@ -264,14 +267,14 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
 
             if (layout == GraphLayout::CSC) {
                 if (v > 0 && v <= n)
-                    degrees[tid][v - 1]++;
+                    std::atomic_ref<uint64_t>(degrees[v - 1]).fetch_add(1, std::memory_order_relaxed);
                 if (force_symmetric && u != v && u > 0 && u <= n)
-                    degrees[tid][u - 1]++;
+                    std::atomic_ref<uint64_t>(degrees[u - 1]).fetch_add(1, std::memory_order_relaxed);
             } else {
                 if (u > 0 && u <= n)
-                    degrees[tid][u - 1]++;
+                    std::atomic_ref<uint64_t>(degrees[u - 1]).fetch_add(1, std::memory_order_relaxed);
                 if (force_symmetric && u != v && v > 0 && v <= n)
-                    degrees[tid][v - 1]++;
+                    std::atomic_ref<uint64_t>(degrees[v - 1]).fetch_add(1, std::memory_order_relaxed);
             }
         }
     };
@@ -285,29 +288,26 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
         if (i < num_threads - 1)
             c_end = next_line(c_end, end);
         if (c_start < c_end)
-            threads.emplace_back(count_chunk, c_start, c_end, i);
+            threads.emplace_back(count_chunk, c_start, c_end);
     }
     for (auto& t : threads)
         t.join();
 
-    // Prefix sums; the per-thread degree arrays are rewritten in place into
-    // per-thread write positions.
+    // Prefix sums over the degree array; the degrees are then rewritten in
+    // place into per-vertex write positions.
     g.row_offsets.resize(n + 1);
     uint64_t current_offset = 0;
     for (uint64_t i = 0; i < n; ++i) {
         g.row_offsets[i] = current_offset;
-        for (unsigned t = 0; t < num_threads; ++t) {
-            const uint64_t d = degrees[t][i];
-            degrees[t][i]    = current_offset;
-            current_offset += d;
-        }
+        current_offset += degrees[i];
+        degrees[i] = g.row_offsets[i];
     }
     g.row_offsets[n] = current_offset;
     g.num_edges      = current_offset;
     g.column_indices.resize(current_offset);
 
     // Pass 2: fill the adjacency lists.
-    auto fill_chunk = [&](const char* c_start, const char* c_end, unsigned tid) {
+    auto fill_chunk = [&](const char* c_start, const char* c_end) {
         const char* ptr = c_start;
         while (ptr < c_end) {
             uint64_t u = 0, v = 0;
@@ -322,16 +322,22 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
                 break;
             ptr = next_line(res.ptr, c_end);
 
+            auto put = [&](uint64_t row, uint64_t col) {
+                const uint64_t pos = std::atomic_ref<uint64_t>(degrees[row]).fetch_add(
+                    1, std::memory_order_relaxed);
+                g.column_indices[pos] = (uint32_t)col;
+            };
+
             if (layout == GraphLayout::CSC) {
                 if (v > 0 && v <= n)
-                    g.column_indices[degrees[tid][v - 1]++] = (uint32_t)(u - 1);
+                    put(v - 1, u - 1);
                 if (force_symmetric && u != v && u > 0 && u <= n)
-                    g.column_indices[degrees[tid][u - 1]++] = (uint32_t)(v - 1);
+                    put(u - 1, v - 1);
             } else {
                 if (u > 0 && u <= n)
-                    g.column_indices[degrees[tid][u - 1]++] = (uint32_t)(v - 1);
+                    put(u - 1, v - 1);
                 if (force_symmetric && u != v && v > 0 && v <= n)
-                    g.column_indices[degrees[tid][v - 1]++] = (uint32_t)(u - 1);
+                    put(v - 1, u - 1);
             }
         }
     };
@@ -345,7 +351,7 @@ HostGraph import_mtx(const std::string& file, bool symmetrize, GraphLayout layou
         if (i < num_threads - 1)
             c_end = next_line(c_end, end);
         if (c_start < c_end)
-            threads.emplace_back(fill_chunk, c_start, c_end, i);
+            threads.emplace_back(fill_chunk, c_start, c_end);
     }
     for (auto& t : threads)
         t.join();
