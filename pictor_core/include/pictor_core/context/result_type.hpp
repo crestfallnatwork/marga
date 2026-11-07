@@ -9,11 +9,11 @@ namespace pictor {
 template <typename T, typename E> class Expected : protected std::variant<T, E> {
   public:
     using std::variant<T, E>::variant;
-    constexpr bool ok() const noexcept
+    [[nodiscard]] constexpr bool ok() const noexcept
     {
         return !std::holds_alternative<E>(*this);
     }
-    constexpr E err() const noexcept
+    [[nodiscard]] constexpr E err() const noexcept
     {
         return std::get<E>(*this);
     }
@@ -21,7 +21,7 @@ template <typename T, typename E> class Expected : protected std::variant<T, E> 
     {
         return std::get<T>(*this);
     }
-    constexpr T const& val() const noexcept
+    [[nodiscard]] constexpr T const& val() const noexcept
     {
         return std::get<T>(*this);
     }
@@ -45,7 +45,7 @@ template <typename T, typename E> class Expected : protected std::variant<T, E> 
 template <typename T> class Optional : protected std::optional<T> {
   public:
     using std::optional<T>::optional;
-    constexpr bool ok() const noexcept
+    [[nodiscard]] constexpr bool ok() const noexcept
     {
         return this->has_value();
     }

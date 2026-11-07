@@ -12,7 +12,7 @@ HeapAllocator::create(Context* ctx, Allocator* underlying, size_t max_heap_size)
     std::unique_ptr<HeapAllocator> heap_allocator{new HeapAllocator};
     heap_allocator->_ctx                  = ctx;
     heap_allocator->_underlying_allocator = underlying;
-    max_heap_size = ((max_heap_size + 15)/16) * 16;
+    max_heap_size                         = ((max_heap_size + 15) / 16) * 16;
     AllocationInfo underlying_allocation =
         heap_allocator->_underlying_allocator->allocate(max_heap_size, 0);
     if (underlying_allocation.res != vk::Result::eSuccess) {
@@ -58,8 +58,7 @@ AllocationInfo HeapAllocator::allocate(size_t bytes, size_t alignment)
     if (alloc.address)
         alloc.address += offset;
     if (alloc.mappedPtr) {
-        alloc.mappedPtr =
-            reinterpret_cast<void*>(reinterpret_cast<size_t>(alloc.mappedPtr) + offset);
+        alloc.mappedPtr = static_cast<char*>(alloc.mappedPtr) + offset;
     }
     return alloc;
 }

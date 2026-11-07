@@ -9,8 +9,41 @@
 
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <utility>
 
 namespace pictor {
+
+// A tuner adjusts a shader's declared tunables for a specific device. Generated shader traits
+// expose `using Tunables = ...;` (see docs/shader-codegen.md) and a tuner fills that struct in:
+//
+//     void tuner(const DeviceInfo& device, SomeShader::Tunables& tunables);
+//
+// The tuner receives the device limits and therefore owns the device-limits contract: it must
+// return a configuration that fits the device. The executor does not model the kernel's
+// shared-memory or workgroup costs, so it cannot reject an over-limit configuration before the
+// driver does. Cost models live next to the primitive, not here.
+//
+// The first conjunct is load-bearing rather than stylistic: without it GCC 14 substitutes the
+// second requires-expression's parameter list even for a code type that has no `Tunables`, and
+// hard-errors instead of reporting the constraint as unsatisfied. The tuner is declared as a
+// parameter (never value-initialised) so that a deduced forwarding reference like `Lambda&` is
+// accepted and the callable is not required to be default-constructible.
+template <typename TCode, typename TTuner>
+concept TunerFor = requires { typename TCode::Tunables; } &&
+                   requires(const DeviceInfo& device, TCode::Tunables& tunables, TTuner&& tuner) {
+                       tuner(device, tunables);
+                   };
+
+// Default-constructs the shader's declared tunables, lets the tuner adjust them for this device,
+// and returns the resulting shader defines.
+template <typename TCode, typename TTuner>
+[[nodiscard]] ShaderDefines tuned_defines(const DeviceInfo& device, TTuner&& tuner)
+{
+    typename TCode::Tunables tunables{};
+    std::forward<TTuner>(tuner)(device, tunables);
+    return tunables.defines();
+}
 
 template <typename TParams, typename TResources = void> class BaseExecutor {
   public:
@@ -38,6 +71,7 @@ template <typename TParams, typename TResources = void> class BaseExecutor {
 
     vk::Device _device;
     Context* ctx;
+    std::string _entry_name;
 
     vk::Result _create_layout(vk::ShaderStageFlags pushConstantStages,
                               const std::vector<vk::DescriptorSetLayoutBinding>& bindings)
@@ -76,9 +110,10 @@ template <typename TParams, typename TResources = void> class BaseExecutor {
         return vk::Result::eSuccess;
     }
 
-    template <typename R = TResources, typename std::enable_if<!std::is_void_v<R>, int>::type = 0>
+    template <typename R = TResources>
     void __bind(vk::CommandBuffer cmd, vk::PipelineBindPoint bindPoint,
                 const TParams& pushConstants, const R& resources)
+        requires(!std::is_void_v<R>)
     {
         cmd.bindPipeline(bindPoint, pipeline);
 
@@ -126,10 +161,10 @@ template <typename TParams, typename TResources = void> class BaseExecutor {
         if (!file.is_open())
             return {};
 
-        size_t fileSize = (size_t)file.tellg();
+        size_t fileSize = static_cast<size_t>(file.tellg());
         std::vector<uint32_t> buffer(fileSize / sizeof(uint32_t));
         file.seekg(0);
-        file.read((char*)buffer.data(), fileSize);
+        file.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(fileSize));
         file.close();
         return buffer;
     }

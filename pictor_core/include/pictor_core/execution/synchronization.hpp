@@ -12,6 +12,7 @@ struct AllocationInfo;
 enum class Access {
     Read,
     Write,
+    ReadWrite,
     IndirectRead,
     TransferRead,
     TransferWrite
@@ -35,6 +36,11 @@ inline AccessInfo get_vulkan_access_info(Access access)
                         vk::PipelineStageFlagBits2::eMeshShaderEXT |
                         vk::PipelineStageFlagBits2::eComputeShader,
                     vk::AccessFlagBits2::eShaderWrite};
+        case Access::ReadWrite:
+            return {vk::PipelineStageFlagBits2::eTaskShaderEXT |
+                        vk::PipelineStageFlagBits2::eMeshShaderEXT |
+                        vk::PipelineStageFlagBits2::eComputeShader,
+                    vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite};
         case Access::IndirectRead:
             return {vk::PipelineStageFlagBits2::eDrawIndirect,
                     vk::AccessFlagBits2::eIndirectCommandRead};

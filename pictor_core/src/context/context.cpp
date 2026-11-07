@@ -6,6 +6,13 @@
 
 #include "pictor_core/context/context.hpp"
 
+#include "pictor_core/profiling/gputrace.hpp"
+
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 namespace pictor {
@@ -17,9 +24,22 @@ Expected<std::unique_ptr<Context>, vk::Result> Context::create()
     }
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
-    auto ctx       = std::unique_ptr<Context>(new Context());
+    auto ctx = std::unique_ptr<Context>(new Context());
+#if defined(PICTOR_DEBUG_UTILS) && PICTOR_DEBUG_UTILS
+    ctx->_debug_utils_enabled = true;
+#endif
+    if (const char* env = std::getenv("PICTOR_DEBUG_UTILS")) {
+        ctx->_debug_utils_enabled = env[0] != '0';
+    }
+#if defined(PICTOR_SHADER_DEBUG_INFO) && PICTOR_SHADER_DEBUG_INFO
+    ctx->_shader_debug_info = true;
+#endif
+    if (const char* env = std::getenv("PICTOR_SHADER_DEBUG_INFO")) {
+        ctx->_shader_debug_info = env[0] != '0';
+    }
     vk::Result res = ctx->_init();
     if (res == vk::Result::eSuccess) {
+        (void)gputrace::initialize(ctx->queue);
         return ctx;
     }
     return res;
@@ -48,8 +68,10 @@ Context::~Context()
 StreamHandle Context::create_stream()
 {
     auto handle = static_cast<StreamHandle>(_streams.size());
-    _streams.emplace_back(std::make_unique<Stream>(
-        device, queue_family_index, physical_device.getProperties().limits.timestampPeriod));
+    _streams.emplace_back(std::make_unique<Stream>(device, queue_family_index));
+    Stream* stream               = _streams.back().get();
+    stream->_debug_utils_enabled = _debug_utils_enabled;
+    stream->_set_debug_name(handle);
     return handle;
 }
 
@@ -102,82 +124,60 @@ void Context::barrier(const std::vector<ResourceBarrier>& barriers, StreamHandle
     }
 }
 
-void Context::copy(const AllocationInfo& src, const AllocationInfo& dst, StreamHandle handle)
+void Context::copy(const AllocationInfo& src, const AllocationInfo& dst, StreamHandle stream)
 {
-    Stream* s = get_stream(handle);
+    Stream* s = get_stream(stream);
     if (s) {
         s->_copy(src, dst);
     }
 }
 
 void Context::fill(const AllocationInfo& dst, uint32_t value, size_t offset, size_t size,
-                   StreamHandle handle)
+                   StreamHandle stream)
 {
     if (size == std::numeric_limits<size_t>::max())
         size = dst.size;
-    return fill(dst, offset, size, value);
+    fill(dst, offset, size, value, stream);
 }
 
 void Context::fill(const AllocationInfo& dst, size_t offset, size_t size, uint32_t value,
-                   StreamHandle handle)
+                   StreamHandle stream)
 {
-    Stream* s = get_stream(handle);
+    Stream* s = get_stream(stream);
     if (s) {
         s->_fill(dst, offset, size, value);
     }
 }
 
 void Context::update(const AllocationInfo& dst, size_t offset, size_t size, const void* data,
-                     StreamHandle handle)
+                     StreamHandle stream)
 {
-    Stream* s = get_stream(handle);
+    Stream* s = get_stream(stream);
     if (s) {
         s->_update(dst, offset, size, data);
     }
 }
 
-void Context::reset_timestamps(uint32_t first, uint32_t count, StreamHandle handle)
+void Context::deallocate(AllocationInfo& alloc)
 {
-    Stream* s = get_stream(handle);
-    if (s)
-        s->reset_timestamps(first, count);
+    if (alloc.alloc)
+        alloc.alloc->deallocate(alloc);
+}
+void Context::invalidate(AllocationInfo& alloc)
+{
+    alloc.alloc->invalidate(alloc);
+}
+void Context::flush(AllocationInfo& alloc)
+{
+    alloc.alloc->flush(alloc);
 }
 
-void Context::timestamp(uint32_t slot, StreamHandle handle)
+size_t Context::get_device_free_memory() const
 {
-    Stream* s = get_stream(handle);
-    if (s)
-        s->write_timestamp(slot);
-}
-
-std::vector<uint64_t> Context::read_timestamps(uint32_t first, uint32_t count, StreamHandle handle)
-{
-    Stream* s = get_stream(handle);
-    if (!s)
-        return std::vector<uint64_t>(count, 0);
-    return s->read_timestamps(first, count);
-}
-
-void Context::deallocate(AllocationInfo& info)
-{
-    if (info.alloc)
-        info.alloc->deallocate(info);
-}
-void Context::invalidate(AllocationInfo& info)
-{
-    info.alloc->invalidate(info);
-}
-void Context::flush(AllocationInfo& info)
-{
-    info.alloc->flush(info);
-}
-
-size_t Context::get_device_free_memory()
-{
-    auto mem_props = vma_allocator.getMemoryProperties();
-    auto budgets   = vma_allocator.getHeapBudgets();
-    size_t usage   = 0;
-    size_t budget  = 0;
+    const auto* mem_props = vma_allocator.getMemoryProperties();
+    auto budgets          = vma_allocator.getHeapBudgets();
+    size_t usage          = 0;
+    size_t budget         = 0;
     for (size_t i = 0; i < budgets.size(); i++) {
         if (!(mem_props->memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
             continue;
@@ -188,12 +188,12 @@ size_t Context::get_device_free_memory()
     return (budget - usage);
 }
 
-size_t Context::get_host_free_memory()
+size_t Context::get_host_free_memory() const
 {
-    auto mem_props = vma_allocator.getMemoryProperties();
-    auto budgets   = vma_allocator.getHeapBudgets();
-    size_t usage   = 0;
-    size_t budget  = 0;
+    const auto* mem_props = vma_allocator.getMemoryProperties();
+    auto budgets          = vma_allocator.getHeapBudgets();
+    size_t usage          = 0;
+    size_t budget         = 0;
     for (size_t i = 0; i < budgets.size(); i++) {
         if ((mem_props->memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal)) {
             continue;
@@ -245,6 +245,10 @@ vk::Result Context::_init()
     if (res != vk::Result::eSuccess)
         return res;
 
+    res = _gather_device_info();
+    if (res != vk::Result::eSuccess)
+        return res;
+
     res = _create_logical_device();
     if (res != vk::Result::eSuccess)
         return res;
@@ -279,10 +283,32 @@ vk::Result Context::_create_instance()
     layers.push_back("VK_LAYER_KHRONOS_validation");
 #endif
 
+    std::vector<const char*> extensions;
+    if (_debug_utils_enabled) {
+        bool available    = false;
+        auto extensionRes = vk::enumerateInstanceExtensionProperties();
+        if (extensionRes.result == vk::Result::eSuccess) {
+            for (const auto& extension : extensionRes.value) {
+                if (std::strcmp(extension.extensionName.data(),
+                                VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
+                    available = true;
+                    break;
+                }
+            }
+        }
+        if (available) {
+            extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        } else {
+            _debug_utils_enabled = false;
+        }
+    }
+
     vk::InstanceCreateInfo createInfo{};
-    createInfo.pApplicationInfo    = &appInfo;
-    createInfo.enabledLayerCount   = static_cast<uint32_t>(layers.size());
-    createInfo.ppEnabledLayerNames = layers.data();
+    createInfo.pApplicationInfo        = &appInfo;
+    createInfo.enabledLayerCount       = static_cast<uint32_t>(layers.size());
+    createInfo.ppEnabledLayerNames     = layers.data();
+    createInfo.enabledExtensionCount   = static_cast<uint32_t>(extensions.size());
+    createInfo.ppEnabledExtensionNames = extensions.data();
 
     auto res = vk::createInstance(createInfo);
     if (res.result == vk::Result::eSuccess) {
@@ -356,10 +382,61 @@ vk::Result Context::_select_physical_device()
     return vk::Result::eSuccess;
 }
 
+vk::Result Context::_gather_device_info()
+{
+    vk::PhysicalDeviceSubgroupProperties subgroupProps;
+    vk::PhysicalDeviceProperties2 props2;
+    props2.pNext = &subgroupProps;
+    physical_device.getProperties2(&props2);
+
+    const auto& props  = props2.properties;
+    const auto& limits = props.limits;
+
+    subgroup_size = subgroupProps.subgroupSize;
+
+    device_info.vendorID      = props.vendorID;
+    device_info.deviceID      = props.deviceID;
+    device_info.driverVersion = props.driverVersion;
+    device_info.deviceName    = props.deviceName.data();
+    device_info.deviceType    = props.deviceType;
+
+    device_info.maxComputeSharedMemorySize     = limits.maxComputeSharedMemorySize;
+    device_info.maxComputeWorkGroupInvocations = limits.maxComputeWorkGroupInvocations;
+    device_info.maxComputeWorkGroupSize        = {limits.maxComputeWorkGroupSize[0],
+                                                  limits.maxComputeWorkGroupSize[1],
+                                                  limits.maxComputeWorkGroupSize[2]};
+    device_info.maxComputeWorkGroupCount       = {limits.maxComputeWorkGroupCount[0],
+                                                  limits.maxComputeWorkGroupCount[1],
+                                                  limits.maxComputeWorkGroupCount[2]};
+
+    device_info.maxStorageBufferRange           = limits.maxStorageBufferRange;
+    device_info.minStorageBufferOffsetAlignment = limits.minStorageBufferOffsetAlignment;
+    device_info.nonCoherentAtomSize             = limits.nonCoherentAtomSize;
+
+    device_info.timestampPeriod = limits.timestampPeriod;
+
+    device_info.subgroup_size = subgroup_size;
+
+    // Capability flags that gate optional shader features. They live here with the rest of the
+    // device facts so consumers never have to re-query the physical device.
+    auto availableExtensions = physical_device.enumerateDeviceExtensionProperties();
+    if (availableExtensions.result == vk::Result::eSuccess) {
+        for (const auto& extension : availableExtensions.value) {
+            if (std::string(extension.extensionName.data()) ==
+                VK_NV_SHADER_SUBGROUP_PARTITIONED_EXTENSION_NAME) {
+                device_info.has_subgroup_partitioned = true;
+                break;
+            }
+        }
+    }
+
+    return vk::Result::eSuccess;
+}
+
 vk::Result Context::_create_logical_device()
 {
-    auto queueFamilies = physical_device.getQueueFamilyProperties();
-    int graphicsIndex  = -1;
+    auto queueFamilies     = physical_device.getQueueFamilyProperties();
+    uint32_t graphicsIndex = std::numeric_limits<uint32_t>::max();
 
     for (uint32_t i = 0; i < queueFamilies.size(); i++) {
         if ((queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics) &&
@@ -369,10 +446,11 @@ vk::Result Context::_create_logical_device()
         }
     }
 
-    if (graphicsIndex == -1)
+    if (graphicsIndex == std::numeric_limits<uint32_t>::max())
         return vk::Result::eErrorInitializationFailed;
 
-    queue_family_index = static_cast<uint32_t>(graphicsIndex);
+    queue_family_index             = graphicsIndex;
+    device_info.timestampValidBits = queueFamilies[graphicsIndex].timestampValidBits;
 
     float queuePriority = 1.0f;
     vk::DeviceQueueCreateInfo queueCreateInfo{};
@@ -381,12 +459,21 @@ vk::Result Context::_create_logical_device()
     queueCreateInfo.pQueuePriorities = &queuePriority;
 
     std::vector<const char*> deviceExtensions = {
-        VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
+        VK_EXT_MESH_SHADER_EXTENSION_NAME,     VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
         VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME,
-        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME};
+        VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,   VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME};
+
+    // Required by any shader that partitions the subgroup (WaveMatch); enabled here so the
+    // capability flag and the enabled-extension set can never disagree.
+    if (device_info.has_subgroup_partitioned)
+        deviceExtensions.push_back(VK_NV_SHADER_SUBGROUP_PARTITIONED_EXTENSION_NAME);
+
+    vk::PhysicalDeviceShaderAtomicInt64Features atomicInt64Features{};
+    atomicInt64Features.shaderBufferInt64Atomics = VK_TRUE;
 
     vk::PhysicalDeviceShaderSubgroupExtendedTypesFeatures extTypes = {};
     extTypes.shaderSubgroupExtendedTypes                           = VK_TRUE;
+    extTypes.pNext                                                 = &atomicInt64Features;
 
     vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomicFloatFeatures;
     atomicFloatFeatures.shaderBufferFloat32AtomicAdd = VK_TRUE;
@@ -416,12 +503,6 @@ vk::Result Context::_create_logical_device()
     vk::PhysicalDeviceFeatures2 deviceFeatures2;
     deviceFeatures2.features.shaderInt64 = VK_TRUE;
     deviceFeatures2.pNext                = &dynamicRendering;
-
-    vk::PhysicalDeviceSubgroupProperties subgroupProps;
-    vk::PhysicalDeviceProperties2 devProps2;
-    devProps2.pNext = &subgroupProps;
-    physical_device.getProperties2(&devProps2);
-    subgroup_size = subgroupProps.subgroupSize;
 
     vk::DeviceCreateInfo createInfo{};
     createInfo.queueCreateInfoCount    = 1;
@@ -469,8 +550,8 @@ vk::Result Context::_setup_allocators()
 {
     root_pinned_allocator = std::make_unique<PinnedMemoryAllocator>(this);
     root_pool_allocator   = std::make_unique<PoolAllocator>(this);
-    pool_allocator = root_pool_allocator.get();
-    pinned_allocator = root_pinned_allocator.get();
+    pool_allocator        = root_pool_allocator.get();
+    pinned_allocator      = root_pinned_allocator.get();
     return vk::Result::eSuccess;
 }
 
@@ -479,6 +560,7 @@ vk::Result Context::_setup_compiler()
     auto res = ShaderCompiler::create();
     if (res.ok()) {
         shader_compiler = std::move(res.val());
+        shader_compiler->set_debug_info(_shader_debug_info);
         return vk::Result::eSuccess;
     }
     return res.err();

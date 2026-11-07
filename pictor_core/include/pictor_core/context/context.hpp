@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "pictor_core/context/device_info.hpp"
 #include "pictor_core/context/result_type.hpp"
 #include "pictor_core/execution/shader_compiler.hpp"
 #include "pictor_core/execution/stream.hpp"
@@ -16,7 +17,8 @@
 
 #include <limits>
 #include <memory>
-#include <vector>
+#include <string>
+#include <string_view>
 
 namespace pictor {
 
@@ -36,7 +38,11 @@ class Context {
 
     void wait_idle() const
     {
-        (void)device.waitIdle();
+        if (device.waitIdle() != vk::Result::eSuccess)
+            return;
+        for (const auto& stream : _streams) {
+            stream->_completed_epoch = stream->_submitted_epoch;
+        }
     }
     void sync(StreamHandle handle = cDefaultStream);
     void barrier(const AllocationInfo& resource, Access from, Access to,
@@ -54,20 +60,27 @@ class Context {
     void update(const AllocationInfo& dst, size_t offset, size_t size, const void* data,
                 StreamHandle stream = cDefaultStream);
 
-    // GPU timestamp instrumentation (optional; used for ablation attribution).
-    void reset_timestamps(uint32_t first, uint32_t count, StreamHandle handle = cDefaultStream);
-    void timestamp(uint32_t slot, StreamHandle handle = cDefaultStream);
-    std::vector<uint64_t> read_timestamps(uint32_t first, uint32_t count,
-                                          StreamHandle handle = cDefaultStream);
-
     void invalidate(AllocationInfo& alloc);
     void flush(AllocationInfo& alloc);
     void deallocate(AllocationInfo& alloc);
 
-    size_t get_device_free_memory();
-    size_t get_host_free_memory();
+    [[nodiscard]] size_t get_device_free_memory() const;
+    [[nodiscard]] size_t get_host_free_memory() const;
     void set_host_allocator(std::unique_ptr<Allocator>&& allocator);
     void set_device_allocator(std::unique_ptr<Allocator>&& allocator);
+
+    [[nodiscard]] bool debug_utils_enabled() const
+    {
+        return _debug_utils_enabled;
+    }
+
+    template <typename TObject> void set_name(const TObject& object, std::string_view name)
+    {
+        if (!_debug_utils_enabled || name.empty()) {
+            return;
+        }
+        (void)device.setDebugUtilsObjectNameEXT(object, std::string(name));
+    }
 
     vk::Instance instance;
     vk::PhysicalDevice physical_device;
@@ -78,6 +91,7 @@ class Context {
 
     vma::Allocator vma_allocator;
     uint32_t subgroup_size{32};
+    DeviceInfo device_info;
 
     Allocator* pinned_allocator;
     Allocator* pool_allocator;
@@ -93,6 +107,7 @@ class Context {
     vk::Result _init();
     vk::Result _create_instance();
     vk::Result _select_physical_device();
+    vk::Result _gather_device_info();
     vk::Result _create_logical_device();
     vk::Result _setup_vma();
     vk::Result _setup_allocators();
@@ -100,6 +115,8 @@ class Context {
     vk::Result _setup_streams();
 
     std::vector<std::unique_ptr<Stream>> _streams;
+    bool _debug_utils_enabled{false};
+    bool _shader_debug_info{false};
 };
 
 } // namespace pictor

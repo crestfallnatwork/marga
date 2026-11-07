@@ -5,48 +5,55 @@
 
 #include "base_executor.hpp"
 
+#include <array>
+
 namespace pictor {
 
 template <typename TCode, typename TParams, typename TResources = void>
 class ComputeExecutor : public BaseExecutor<TParams, TResources> {
   public:
-    static inline constexpr uint32_t cSubgroupMultiplierX = TCode::cSubgroupMultiplierX;
-    static inline constexpr uint32_t cGroupSizeX          = TCode::cGroupSizeX;
-    static inline constexpr uint32_t cSubgroupMultiplierY = TCode::cSubgroupMultiplierY;
-    static inline constexpr uint32_t cGroupSizeY          = TCode::cGroupSizeY;
-    static inline constexpr uint32_t cSubgroupMultiplierZ = TCode::cSubgroupMultiplierZ;
-    static inline constexpr uint32_t cGroupSizeZ          = TCode::cGroupSizeZ;
     const uint32_t wgX;
     const uint32_t wgY;
     const uint32_t wgZ;
 
     static Expected<std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>, vk::Result>
-    create(Context& ctx, const vk::SpecializationInfo* specInfo = nullptr)
+    create(Context& ctx, const vk::SpecializationInfo* specInfo = nullptr,
+           CompileOptions options = {})
     {
 
-        auto compileResult = ctx.shader_compiler->compile(std::string(TCode::source),
-                                                          std::string(TCode::entry_point),
-                                                          ShaderStage::Compute, ctx.subgroup_size);
+        auto compileResult =
+            ctx.shader_compiler->compile(TCode::sources, std::string(TCode::entry_point),
+                                         ShaderStage::Compute, ctx.subgroup_size, options);
         if (!compileResult.success) {
             return vk::Result::eErrorInitializationFailed;
         }
 
         return create_from_spirv(ctx, compileResult.spirv, std::string(TCode::entry_point),
-                                 specInfo);
+                                 specInfo, compileResult.threadGroupSize);
+    }
+
+    // Tuned creation: `tuner` adjusts the shader's declared tunables for this device before the
+    // module is compiled. `TunerFor` and `tuned_defines` own the callable shape, the device-limits
+    // contract and the shared step.
+    template <typename TTuner>
+        requires TunerFor<TCode, TTuner>
+    static Expected<std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>, vk::Result>
+    create(Context& ctx, TTuner&& tuner, const vk::SpecializationInfo* specInfo = nullptr)
+    {
+        auto defines = tuned_defines<TCode>(ctx.device_info, std::forward<TTuner>(tuner));
+        return create(ctx, specInfo, CompileOptions{defines.view()});
     }
 
     static Expected<std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>, vk::Result>
     create_from_spirv(Context& ctx, const std::vector<uint32_t>& computeShader,
-                      const std::string& entry               = "main",
-                      const vk::SpecializationInfo* specInfo = nullptr)
+                      const std::string& entry                = "main",
+                      const vk::SpecializationInfo* specInfo  = nullptr,
+                      std::array<uint32_t, 3> threadGroupSize = {1, 1, 1})
     {
 
-        uint32_t wgX = ctx.subgroup_size * cSubgroupMultiplierX + cGroupSizeX;
-        uint32_t wgY = ctx.subgroup_size * cSubgroupMultiplierY + cGroupSizeY;
-        uint32_t wgZ = ctx.subgroup_size * cSubgroupMultiplierZ + cGroupSizeZ;
-
         auto executor = std::unique_ptr<ComputeExecutor<TCode, TParams, TResources>>(
-            new ComputeExecutor<TCode, TParams, TResources>(wgX, wgY, wgY));
+            new ComputeExecutor<TCode, TParams, TResources>(threadGroupSize[0], threadGroupSize[1],
+                                                            threadGroupSize[2]));
         executor->ctx = &ctx;
 
         // Auto-Binding: Get bindings from the Resources struct if it exists
@@ -75,7 +82,9 @@ class ComputeExecutor : public BaseExecutor<TParams, TResources> {
 
         if (pipeRes.result != vk::Result::eSuccess)
             return pipeRes.result;
-        executor->pipeline = pipeRes.value;
+        executor->pipeline    = pipeRes.value;
+        executor->_entry_name = entry;
+        executor->ctx->set_name(executor->pipeline, entry);
 
         return executor;
     }
@@ -92,7 +101,7 @@ class ComputeExecutor : public BaseExecutor<TParams, TResources> {
         uint32_t z_ = (z + wgZ - 1) / wgZ;
 
         DirectParams params = {this, pushConstants, x_, y_, z_};
-        stream->record(_direct_record_cb, &params);
+        stream->record(this->_entry_name.c_str(), _direct_record_cb, &params);
     }
 
     void record_indirect(const AllocationInfo& indirectBuffer, const TParams& pushConstants,
@@ -103,7 +112,7 @@ class ComputeExecutor : public BaseExecutor<TParams, TResources> {
             return;
 
         IndirectParams params = {this, pushConstants, indirectBuffer.buffer, indirectBuffer.offset};
-        stream->record(_indirect_record_cb, &params);
+        stream->record(this->_entry_name.c_str(), _indirect_record_cb, &params);
     }
 
   private:

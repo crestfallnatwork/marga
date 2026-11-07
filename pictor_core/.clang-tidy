@@ -1,0 +1,35 @@
+---
+# pictor_core lint baseline. Style rules live in STYLE.md.
+# Run through scripts/lint.sh; the pre-commit hook applies it to staged files.
+#
+# Severity (see WarningsAsErrors below): `bugprone-*` and `performance-*` are
+# errors, i.e. real bug/perf patterns. `modernize-*` and `readability-*` are
+# advisory warnings. The two widening checks are disabled on purpose: implicit
+# widening, and signed->unsigned of a known non-negative value, are not defects
+# worth blocking a commit over.
+Checks: >
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-macro-parentheses,
+  -bugprone-misplaced-widening-cast,
+  -bugprone-random-generator-seed,
+  -bugprone-reserved-identifier,
+  -modernize-use-designated-initializers,
+  -modernize-use-trailing-return-type,
+  -performance-enum-size,
+  -readability-braces-around-statements,
+  -readability-convert-member-functions-to-static,
+  -readability-else-after-return,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-implicit-bool-conversion,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix,
+WarningsAsErrors: 'bugprone-*,performance-*'
+HeaderFilterRegex: '.*pictor-core/(include|src|algorithms|test)/.*'
+FormatStyle: file

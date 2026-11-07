@@ -5,24 +5,13 @@
 
 #include "base_executor.hpp"
 
+#include <array>
+
 namespace pictor {
 
 template <typename TCode, typename TParams, typename TResources = void>
 class MeshExecutor : public BaseExecutor<TParams, TResources> {
   public:
-    static inline constexpr uint32_t cTaskSubgroupMultiplierX = TCode::cTaskSubgroupMultiplierX;
-    static inline constexpr uint32_t cTaskGroupSizeX          = TCode::cTaskGroupSizeX;
-    static inline constexpr uint32_t cTaskSubgroupMultiplierY = TCode::cTaskSubgroupMultiplierY;
-    static inline constexpr uint32_t cTaskGroupSizeY          = TCode::cTaskGroupSizeY;
-    static inline constexpr uint32_t cTaskSubgroupMultiplierZ = TCode::cTaskSubgroupMultiplierZ;
-    static inline constexpr uint32_t cTaskGroupSizeZ          = TCode::cTaskGroupSizeZ;
-
-    static inline constexpr uint32_t cMeshSubgroupMultiplierX = TCode::cMeshSubgroupMultiplierX;
-    static inline constexpr uint32_t cMeshGroupSizeX          = TCode::cMeshGroupSizeX;
-    static inline constexpr uint32_t cMeshSubgroupMultiplierY = TCode::cMeshSubgroupMultiplierY;
-    static inline constexpr uint32_t cMeshGroupSizeY          = TCode::cMeshGroupSizeY;
-    static inline constexpr uint32_t cMeshSubgroupMultiplierZ = TCode::cMeshSubgroupMultiplierZ;
-    static inline constexpr uint32_t cMeshGroupSizeZ          = TCode::cMeshGroupSizeZ;
     const uint32_t taskWgX;
     const uint32_t taskWgY;
     const uint32_t taskWgZ;
@@ -31,40 +20,48 @@ class MeshExecutor : public BaseExecutor<TParams, TResources> {
     const uint32_t meshWgZ;
 
     static Expected<std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>, vk::Result>
-    create(Context& ctx, const vk::SpecializationInfo* specInfo = nullptr)
+    create(Context& ctx, const vk::SpecializationInfo* specInfo = nullptr,
+           CompileOptions options = {})
     {
 
-        auto taskRes =
-            ctx.shader_compiler->compile(std::string(TCode::source), std::string(TCode::task_entry),
-                                         ShaderStage::Task, ctx.subgroup_size);
-        auto meshRes =
-            ctx.shader_compiler->compile(std::string(TCode::source), std::string(TCode::mesh_entry),
-                                         ShaderStage::Mesh, ctx.subgroup_size);
+        auto taskRes = ctx.shader_compiler->compile(TCode::sources, std::string(TCode::task_entry),
+                                                    ShaderStage::Task, ctx.subgroup_size, options);
+        auto meshRes = ctx.shader_compiler->compile(TCode::sources, std::string(TCode::mesh_entry),
+                                                    ShaderStage::Mesh, ctx.subgroup_size, options);
 
         if (!taskRes.success || !meshRes.success) {
             return vk::Result::eErrorInitializationFailed;
         }
 
         return create_from_spirv(ctx, taskRes.spirv, meshRes.spirv, std::string(TCode::task_entry),
-                                 std::string(TCode::mesh_entry), specInfo);
+                                 std::string(TCode::mesh_entry), specInfo, taskRes.threadGroupSize,
+                                 meshRes.threadGroupSize);
+    }
+
+    // Tuned creation: `tuner` adjusts the shader's declared tunables for this device before the
+    // modules are compiled. `TunerFor` and `tuned_defines` own the callable shape, the
+    // device-limits contract and the shared step.
+    template <typename TTuner>
+        requires TunerFor<TCode, TTuner>
+    static Expected<std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>, vk::Result>
+    create(Context& ctx, TTuner&& tuner, const vk::SpecializationInfo* specInfo = nullptr)
+    {
+        auto defines = tuned_defines<TCode>(ctx.device_info, std::forward<TTuner>(tuner));
+        return create(ctx, specInfo, CompileOptions{defines.view()});
     }
 
     static Expected<std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>, vk::Result>
     create_from_spirv(Context& ctx, const std::vector<uint32_t>& taskShader,
                       const std::vector<uint32_t>& meshShader,
                       const std::string& taskEntry = "main", const std::string& meshEntry = "main",
-                      const vk::SpecializationInfo* specInfo = nullptr)
+                      const vk::SpecializationInfo* specInfo      = nullptr,
+                      std::array<uint32_t, 3> taskThreadGroupSize = {1, 1, 1},
+                      std::array<uint32_t, 3> meshThreadGroupSize = {1, 1, 1})
     {
-        uint32_t taskWgX = ctx.subgroup_size * cTaskSubgroupMultiplierX + cTaskGroupSizeX;
-        uint32_t taskWgY = ctx.subgroup_size * cTaskSubgroupMultiplierY + cTaskGroupSizeY;
-        uint32_t taskWgZ = ctx.subgroup_size * cTaskSubgroupMultiplierZ + cTaskGroupSizeZ;
-        uint32_t meshWgX = ctx.subgroup_size * cMeshSubgroupMultiplierX + cMeshGroupSizeX;
-        uint32_t meshWgY = ctx.subgroup_size * cMeshSubgroupMultiplierY + cMeshGroupSizeY;
-        uint32_t meshWgZ = ctx.subgroup_size * cMeshSubgroupMultiplierZ + cMeshGroupSizeZ;
-
         auto executor = std::unique_ptr<MeshExecutor<TCode, TParams, TResources>>(
-            new MeshExecutor<TCode, TParams, TResources>(taskWgX, taskWgY, taskWgZ, meshWgX,
-                                                         meshWgY, meshWgZ));
+            new MeshExecutor<TCode, TParams, TResources>(
+                taskThreadGroupSize[0], taskThreadGroupSize[1], taskThreadGroupSize[2],
+                meshThreadGroupSize[0], meshThreadGroupSize[1], meshThreadGroupSize[2]));
         executor->ctx = &ctx;
 
         vk::ShaderStageFlags pushRangeStages =
@@ -120,7 +117,9 @@ class MeshExecutor : public BaseExecutor<TParams, TResources> {
 
         if (pipeRes.result != vk::Result::eSuccess)
             return pipeRes.result;
-        executor->pipeline = pipeRes.value;
+        executor->pipeline    = pipeRes.value;
+        executor->_entry_name = meshEntry;
+        executor->ctx->set_name(executor->pipeline, meshEntry);
 
         return executor;
     }
@@ -137,7 +136,7 @@ class MeshExecutor : public BaseExecutor<TParams, TResources> {
         uint32_t z_ = (z + taskWgZ - 1) / taskWgZ;
 
         DirectParams params = {this, pushConstants, x_, y_, z_};
-        stream->record(_direct_record_cb, &params);
+        stream->record(this->_entry_name.c_str(), _direct_record_cb, &params);
     }
 
     void record_raw(uint32_t x, uint32_t y, uint32_t z, const TParams& pushConstants,
@@ -147,7 +146,7 @@ class MeshExecutor : public BaseExecutor<TParams, TResources> {
         if (!stream)
             return;
         DirectParams params = {this, pushConstants, x, y, z};
-        stream->record(_direct_record_cb, &params);
+        stream->record(this->_entry_name.c_str(), _direct_record_cb, &params);
     }
 
     void record_indirect(const AllocationInfo& indirectBuffer, const TParams& pushConstants,
@@ -159,7 +158,7 @@ class MeshExecutor : public BaseExecutor<TParams, TResources> {
 
         auto params =
             IndirectParams{.self = this, .pushConstants = pushConstants, .alloc = indirectBuffer};
-        stream->record(_indirect_record_cb, &params);
+        stream->record(this->_entry_name.c_str(), _indirect_record_cb, &params);
     }
 
   private:

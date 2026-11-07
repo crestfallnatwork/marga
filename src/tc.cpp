@@ -2,6 +2,7 @@
 #include "csr.hpp"
 
 #include "pictor_core/context/context.hpp"
+#include "pictor_core/execution/gpu_timer.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -82,8 +83,17 @@ uint64_t TC::run(Graph const& g)
     }
 
     const uint64_t num_batches = (g.num_edges + cBatchSize - 1) / cBatchSize;
-    if (profiling)
-        ctx.reset_timestamps(0, static_cast<uint32_t>(4 * num_batches));
+
+    GpuTimer timer;
+    if (profiling) {
+        auto timer_res = GpuTimer::create(ctx, static_cast<uint32_t>(3 * num_batches));
+        if (!timer_res.ok()) {
+            std::fprintf(stderr, "tc: failed to create the GPU timer\n");
+            std::exit(1);
+        }
+        timer = std::move(timer_res.val());
+        timer.reset();
+    }
 
     double   host_record_us = 0.0;
     double   host_wait_us   = 0.0;
@@ -97,34 +107,36 @@ uint64_t TC::run(Graph const& g)
         task_groups += static_cast<uint64_t>(tx) * ty;
 
         const auto t_rec0 = high_resolution_clock::now();
-        if (profiling)
-            ctx.timestamp(static_cast<uint32_t>(4 * batch_index + 0));
-        tc->record_raw(tx, ty, 1,
-                       {
-                           .list_offset  = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
-                           .edge_lists   = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
-                           .tc           = reinterpret_cast<uint32_t*>(result.address),
-                           .num_vertices = g.num_vertices,
-                           .edge_start   = edge_start,
-                           .edge_num     = edge_num,
-                           .mesh_noop    = mesh_noop,
-                           .no_payload   = no_payload,
-                           .task_noop    = task_noop,
-                           .count_mesh   = count_mesh ? 1u : 0u,
-                           .mesh_count   = reinterpret_cast<uint64_t*>(mesh_count_dev.address),
-                           .cull         = cull,
-                       });
-        if (profiling)
-            ctx.timestamp(static_cast<uint32_t>(4 * batch_index + 1));
+        {
+            auto lap = timer.lap("draw");
+            tc->record_raw(tx, ty, 1,
+                           {
+                               .list_offset  = reinterpret_cast<uint64_t*>(g.d_row_offsets.address),
+                               .edge_lists   = reinterpret_cast<uint32_t*>(g.d_column_indices.address),
+                               .tc           = reinterpret_cast<uint32_t*>(result.address),
+                               .num_vertices = g.num_vertices,
+                               .edge_start   = edge_start,
+                               .edge_num     = edge_num,
+                               .mesh_noop    = mesh_noop,
+                               .no_payload   = no_payload,
+                               .task_noop    = task_noop,
+                               .count_mesh   = count_mesh ? 1u : 0u,
+                               .mesh_count   = reinterpret_cast<uint64_t*>(mesh_count_dev.address),
+                               .cull         = cull,
+                           });
+        }
 
-        ctx.barrier(result, Access::Write, Access::TransferRead);
-        ctx.copy(result, h_result);
-        if (profiling)
-            ctx.timestamp(static_cast<uint32_t>(4 * batch_index + 2));
-        ctx.barrier(result, Access::TransferRead, Access::TransferWrite);
-        ctx.fill(result, 0);
-        if (profiling)
-            ctx.timestamp(static_cast<uint32_t>(4 * batch_index + 3));
+        {
+            auto lap = timer.lap("copy");
+            ctx.barrier(result, Access::Write, Access::TransferRead);
+            ctx.copy(result, h_result);
+        }
+
+        {
+            auto lap = timer.lap("fill");
+            ctx.barrier(result, Access::TransferRead, Access::TransferWrite);
+            ctx.fill(result, 0);
+        }
         const auto t_rec1 = high_resolution_clock::now();
 
         ctx.fsync();
@@ -154,16 +166,20 @@ uint64_t TC::run(Graph const& g)
         ctx.deallocate(mesh_count_host);
     }
 
-    if (profiling) {
-        const auto ts      = ctx.read_timestamps(0, static_cast<uint32_t>(4 * batch_index));
+    if (profiling && timer.enabled()) {
+        auto laps_res = timer.read();
+        if (!laps_res.ok() || laps_res.val().size() < 3 * batch_index) {
+            std::fprintf(stderr, "tc: GPU timer results unavailable\n");
+            std::exit(1);
+        }
+        const auto laps    = laps_res.val();
         double     draw_us = 0.0;
         double     copy_us = 0.0;
         double     fill_us = 0.0;
         for (uint64_t b = 0; b < batch_index; ++b) {
-            const uint64_t* t      = ts.data() + 4 * b;
-            const double    d_draw = static_cast<double>(t[1] - t[0]) / 1000.0;
-            const double    d_copy = static_cast<double>(t[2] - t[1]) / 1000.0;
-            const double    d_fill = static_cast<double>(t[3] - t[2]) / 1000.0;
+            const double d_draw = laps[3 * b + 0].ms * 1000.0;
+            const double d_copy = laps[3 * b + 1].ms * 1000.0;
+            const double d_fill = laps[3 * b + 2].ms * 1000.0;
             draw_us += d_draw;
             copy_us += d_copy;
             fill_us += d_fill;

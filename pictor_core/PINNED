@@ -1,0 +1,4 @@
+upstream: git@github.com:crestfallnatwork/pictor-core.git
+branch:   main
+commit:   5d30e3025f3082a541caef7fc2ded7d2298623e8
+date:     2026-11-07

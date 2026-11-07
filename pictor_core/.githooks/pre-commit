@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Pre-commit hook: format staged C++ hunks with clang-format, then lint staged C++ files.
+# Enable once per clone with: git config core.hooksPath .githooks
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+fmt_out="$(scripts/format.sh --staged)"
+files="$(printf '%s\n' "$fmt_out" | sed -n '/^changed files:/,$p' | tail -n +2 |
+    sed 's/^[[:space:]]*//' | grep -v '^$' || true)"
+if [[ -n "$files" ]]; then
+    echo "pre-commit: clang-format reformatted:"
+    printf '%s\n' "$files" | sed 's/^/  /'
+    # shellcheck disable=SC2086
+    git add -- $files
+fi
+
+if [[ -f build/compile_commands.json ]]; then
+    scripts/lint.sh --staged
+else
+    echo "pre-commit: build/compile_commands.json not found; skipping clang-tidy" >&2
+fi

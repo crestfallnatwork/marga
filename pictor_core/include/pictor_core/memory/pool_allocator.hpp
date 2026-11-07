@@ -20,15 +20,15 @@ class PoolAllocator : public Allocator {
 
   public:
     PoolAllocator(Context* ctx);
-    virtual ~PoolAllocator() override;
+    ~PoolAllocator() override;
 
-    virtual AllocationInfo allocate(size_t bytes, size_t alignment) override;
+    AllocationInfo allocate(size_t bytes, size_t alignment) override;
 
     AllocationInfo allocate(PoolAllocatorParams const& params);
 
-    virtual void deallocate(AllocationInfo& info) override;
+    void deallocate(AllocationInfo& info) override;
 
-    virtual void flush(AllocationInfo const& info) override;
-    virtual void invalidate(AllocationInfo const& info) override;
+    void flush(AllocationInfo const& info) override;
+    void invalidate(AllocationInfo const& info) override;
 };
 } // namespace pictor

@@ -8,7 +8,7 @@ namespace pictor {
 
 PinnedMemoryAllocator::PinnedMemoryAllocator(Context* ctx) : _ctx(ctx) {}
 
-PinnedMemoryAllocator::~PinnedMemoryAllocator() {}
+PinnedMemoryAllocator::~PinnedMemoryAllocator() = default;
 
 AllocationInfo PinnedMemoryAllocator::allocate(size_t bytes, size_t alignment)
 {
@@ -30,8 +30,8 @@ AllocationInfo PinnedMemoryAllocator::allocate(PinnedMemoryAllocatorParams const
 
     vma::AllocationCreateInfo localAllocInfo{};
     localAllocInfo.usage = vma::MemoryUsage::eAutoPreferHost;
-    localAllocInfo.flags = vma::AllocationCreateFlagBits::eHostAccessRandom |
-                           vma::AllocationCreateFlagBits::eMapped;
+    localAllocInfo.flags =
+        vma::AllocationCreateFlagBits::eHostAccessRandom | vma::AllocationCreateFlagBits::eMapped;
 
     vk::BufferCreateInfo bufferInfo{};
     bufferInfo.size  = params.size;

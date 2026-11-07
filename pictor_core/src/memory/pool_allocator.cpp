@@ -7,7 +7,7 @@
 namespace pictor {
 PoolAllocator::PoolAllocator(Context* ctx) : _ctx(ctx) {}
 
-PoolAllocator::~PoolAllocator() {}
+PoolAllocator::~PoolAllocator() = default;
 
 AllocationInfo PoolAllocator::allocate(size_t bytes, size_t alignment)
 {

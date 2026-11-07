@@ -20,16 +20,16 @@ class PinnedMemoryAllocator : public Allocator {
 
   public:
     PinnedMemoryAllocator(Context* ctx);
-    virtual ~PinnedMemoryAllocator() override;
+    ~PinnedMemoryAllocator() override;
 
-    virtual AllocationInfo allocate(size_t bytes, size_t alignment) override;
+    AllocationInfo allocate(size_t bytes, size_t alignment) override;
 
     AllocationInfo allocate(PinnedMemoryAllocatorParams const& params);
 
-    virtual void deallocate(AllocationInfo& info) override;
+    void deallocate(AllocationInfo& info) override;
 
-    virtual void flush(AllocationInfo const& info) override;
-    virtual void invalidate(AllocationInfo const& info) override;
+    void flush(AllocationInfo const& info) override;
+    void invalidate(AllocationInfo const& info) override;
 };
 
 } // namespace pictor

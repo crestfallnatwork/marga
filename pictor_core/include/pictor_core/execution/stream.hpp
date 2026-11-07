@@ -9,11 +9,13 @@
 #include <vulkan/vulkan.hpp>
 
 #include <array>
-#include <vector>
+#include <cstdint>
+#include <string>
 
 namespace pictor {
 
 class Context;
+class GpuTimer;
 
 using StreamHandle                           = uint32_t;
 inline constexpr StreamHandle cDefaultStream = 0;
@@ -22,7 +24,7 @@ using RecordCallback = void (*)(vk::CommandBuffer cmd, void* user_data);
 
 class Stream {
   public:
-    Stream(vk::Device device, uint32_t queue_family_index, float timestamp_period = 1.0f);
+    Stream(vk::Device device, uint32_t queue_family_index);
     ~Stream();
 
     Stream(const Stream&)            = delete;
@@ -38,26 +40,27 @@ class Stream {
     void barrier(const AllocationInfo& resource, Access from, Access to);
     void barrier(const std::vector<ResourceBarrier>& barriers);
 
-    void record(RecordCallback cb, void* user_data);
+    void begin_label(const char* name);
+    void end_label();
+    void insert_label(const char* name);
 
-    // GPU timestamp instrumentation (optional; used for ablation attribution).
-    // write_timestamp records a device timestamp into `slot` at the current
-    // command-buffer position; read_timestamps blocks until the results are
-    // available (call only after synchronize/fsync) and returns nanoseconds.
-    void reset_timestamps(uint32_t first, uint32_t count);
-    void write_timestamp(uint32_t slot);
-    std::vector<uint64_t> read_timestamps(uint32_t first, uint32_t count);
+    void record(RecordCallback cb, void* user_data);
+    void record(const char* label, RecordCallback cb, void* user_data);
 
     vk::Device device;
     vk::CommandPool command_pool;
 
-    vk::CommandBuffer current_command_buffer() const
+    [[nodiscard]] vk::CommandBuffer current_command_buffer() const
     {
         return _command_buffers[_current_frame];
     }
 
   private:
     friend class Context;
+    friend class GpuTimer;
+
+    void _set_debug_name(StreamHandle handle);
+    void _synchronize_submitted();
 
     void _copy(const AllocationInfo& src, const AllocationInfo& dst);
     void _fill(const AllocationInfo& dst, size_t offset, size_t size, uint32_t value);
@@ -65,10 +68,16 @@ class Stream {
 
     std::array<vk::CommandBuffer, 2> _command_buffers;
     std::array<vk::Fence, 2> _fences;
-    vk::QueryPool _timestamp_pool;
-    float _timestamp_period{1.0f}; // ns per timestamp tick
+    std::array<bool, 2> _frame_submitted{};
     uint32_t _current_frame{0};
+    uint64_t _epoch{0};
+    uint64_t _submitted_epoch{0};
+    uint64_t _completed_epoch{0};
+    uint64_t _discarded_epoch{0};
+    uint64_t _discard_seq{0};
     bool _recording{false};
+    bool _debug_utils_enabled{false};
+    std::string _debug_name;
 };
 
 } // namespace pictor

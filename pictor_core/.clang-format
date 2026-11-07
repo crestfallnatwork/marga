@@ -53,5 +53,5 @@ IncludeBlocks: Preserve
 DerivePointerAlignment: false
 ReferenceAlignment: Pointer
 
-Standard: Latest
+Standard: c++20
 FixNamespaceComments: true

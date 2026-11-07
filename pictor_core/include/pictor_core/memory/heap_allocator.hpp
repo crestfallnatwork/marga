@@ -27,16 +27,16 @@ class HeapAllocator : public Allocator {
   public:
     static Expected<std::unique_ptr<HeapAllocator>, vk::Result>
     create(Context* ctx, Allocator* underlying, size_t max_heap_size);
-    virtual ~HeapAllocator() override;
+    ~HeapAllocator() override;
 
-    virtual AllocationInfo allocate(size_t bytes, size_t alignment) override;
+    AllocationInfo allocate(size_t bytes, size_t alignment) override;
 
     AllocationInfo allocate(HeapAllocatorParams const& params);
 
-    virtual void deallocate(AllocationInfo& info) override;
+    void deallocate(AllocationInfo& info) override;
 
-    virtual void flush(AllocationInfo const& info) override;
-    virtual void invalidate(AllocationInfo const& info) override;
+    void flush(AllocationInfo const& info) override;
+    void invalidate(AllocationInfo const& info) override;
 };
 
 } // namespace pictor

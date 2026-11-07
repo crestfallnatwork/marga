@@ -4,13 +4,11 @@
 #include "pictor_core/execution/stream.hpp"
 
 #include <algorithm>
+#include <cstddef>
 
 namespace pictor {
 
-constexpr uint32_t cTimestampSlots = 4096;
-
-Stream::Stream(vk::Device dev, uint32_t queue_family_index, float timestamp_period)
-    : device(dev), _timestamp_period(timestamp_period)
+Stream::Stream(vk::Device dev, uint32_t queue_family_index) : device(dev)
 {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.queueFamilyIndex = queue_family_index;
@@ -35,15 +33,6 @@ Stream::Stream(vk::Device dev, uint32_t queue_family_index, float timestamp_peri
         fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
         _fences[0]      = device.createFence(fenceInfo).value;
         _fences[1]      = device.createFence(fenceInfo).value;
-
-        // Optional GPU timestamp pool (see write_timestamp); failures are
-        // tolerated so instrumentation never breaks the default path.
-        vk::QueryPoolCreateInfo timestampInfo{};
-        timestampInfo.queryType  = vk::QueryType::eTimestamp;
-        timestampInfo.queryCount = cTimestampSlots;
-        auto tsRes               = device.createQueryPool(timestampInfo);
-        if (tsRes.result == vk::Result::eSuccess)
-            _timestamp_pool = tsRes.value;
     }
 }
 
@@ -51,12 +40,23 @@ Stream::~Stream()
 {
     if (device) {
         synchronize();
-        if (_timestamp_pool)
-            device.destroyQueryPool(_timestamp_pool);
         for (auto f : _fences)
             device.destroyFence(f);
         if (command_pool)
             device.destroyCommandPool(command_pool);
+    }
+}
+
+void Stream::_set_debug_name(StreamHandle handle)
+{
+    _debug_name = "stream " + std::to_string(handle);
+    if (!_debug_utils_enabled) {
+        return;
+    }
+
+    for (size_t i = 0; i < _command_buffers.size(); ++i) {
+        (void)device.setDebugUtilsObjectNameEXT(_command_buffers[i],
+                                                _debug_name + " cmd " + std::to_string(i));
     }
 }
 
@@ -65,17 +65,29 @@ vk::Result Stream::begin()
     if (_recording)
         return vk::Result::eSuccess;
 
-    (void)device.waitForFences(1, &_fences[_current_frame], VK_TRUE, UINT64_MAX);
-    (void)device.resetFences(1, &_fences[_current_frame]);
+    if (_epoch > _submitted_epoch) {
+        _discarded_epoch = _epoch;
+        ++_discard_seq;
+    }
 
-    (void)_command_buffers[_current_frame].reset();
+    const uint32_t frame = _current_frame;
+    if (_frame_submitted[frame]) {
+        const vk::Result wait = device.waitForFences(1, &_fences[frame], VK_TRUE, UINT64_MAX);
+        if (wait != vk::Result::eSuccess)
+            return wait;
+        _frame_submitted[frame] = false;
+    }
+    (void)device.resetFences(1, &_fences[frame]);
+
+    (void)_command_buffers[frame].reset();
 
     vk::CommandBufferBeginInfo beginInfo{};
     beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
 
-    vk::Result res = _command_buffers[_current_frame].begin(beginInfo);
+    vk::Result res = _command_buffers[frame].begin(beginInfo);
     if (res == vk::Result::eSuccess) {
         _recording = true;
+        ++_epoch;
     }
     return res;
 }
@@ -105,11 +117,25 @@ vk::Result Stream::flush(vk::Queue queue)
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers    = &_command_buffers[_current_frame];
 
+    const bool label = _debug_utils_enabled && !_debug_name.empty();
+    if (label) {
+        vk::DebugUtilsLabelEXT labelInfo{};
+        labelInfo.pLabelName = _debug_name.c_str();
+        queue.beginDebugUtilsLabelEXT(labelInfo);
+    }
+
     res = queue.submit(1, &submitInfo, _fences[_current_frame]);
+
+    if (label) {
+        queue.endDebugUtilsLabelEXT();
+    }
+
     if (res != vk::Result::eSuccess)
         return res;
 
-    _current_frame = (_current_frame + 1) % 2;
+    _submitted_epoch                 = _epoch;
+    _frame_submitted[_current_frame] = true;
+    _current_frame                   = (_current_frame + 1) % 2;
     return vk::Result::eSuccess;
 }
 
@@ -124,7 +150,29 @@ vk::Result Stream::fsync(vk::Queue queue)
 
 void Stream::synchronize()
 {
-    (void)device.waitForFences(2, _fences.data(), VK_TRUE, UINT64_MAX);
+    std::array<vk::Fence, 2> fences{};
+    uint32_t count = 0;
+    for (size_t i = 0; i < _fences.size(); ++i) {
+        if (_frame_submitted[i]) {
+            fences[count++] = _fences[i];
+        }
+    }
+    if (count == 0)
+        return;
+
+    const uint64_t submitted = _submitted_epoch;
+    if (device.waitForFences(count, fences.data(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess)
+        return;
+
+    _frame_submitted.fill(false);
+    _completed_epoch = submitted;
+}
+
+void Stream::_synchronize_submitted()
+{
+    if (!_frame_submitted[0] && !_frame_submitted[1])
+        return;
+    synchronize();
 }
 
 void Stream::barrier(const AllocationInfo& resource, Access from, Access to)
@@ -186,6 +234,46 @@ void Stream::barrier(const std::vector<ResourceBarrier>& barriers)
     _command_buffers[_current_frame].pipelineBarrier2(dependencyInfo);
 }
 
+void Stream::begin_label(const char* name)
+{
+    if (!_debug_utils_enabled || !name) {
+        return;
+    }
+    if (!_recording) {
+        if (begin() != vk::Result::eSuccess) {
+            return;
+        }
+    }
+
+    vk::DebugUtilsLabelEXT labelInfo{};
+    labelInfo.pLabelName = name;
+    _command_buffers[_current_frame].beginDebugUtilsLabelEXT(labelInfo);
+}
+
+void Stream::end_label()
+{
+    if (!_debug_utils_enabled || !_recording) {
+        return;
+    }
+    _command_buffers[_current_frame].endDebugUtilsLabelEXT();
+}
+
+void Stream::insert_label(const char* name)
+{
+    if (!_debug_utils_enabled || !name) {
+        return;
+    }
+    if (!_recording) {
+        if (begin() != vk::Result::eSuccess) {
+            return;
+        }
+    }
+
+    vk::DebugUtilsLabelEXT labelInfo{};
+    labelInfo.pLabelName = name;
+    _command_buffers[_current_frame].insertDebugUtilsLabelEXT(labelInfo);
+}
+
 void Stream::record(RecordCallback cb, void* user_data)
 {
     if (!_recording) {
@@ -195,6 +283,29 @@ void Stream::record(RecordCallback cb, void* user_data)
 
     if (cb) {
         cb(_command_buffers[_current_frame], user_data);
+    }
+}
+
+void Stream::record(const char* label, RecordCallback cb, void* user_data)
+{
+    if (!_recording) {
+        if (begin() != vk::Result::eSuccess)
+            return;
+    }
+
+    const bool labeled = _debug_utils_enabled && label && label[0] != '\0';
+    if (labeled) {
+        vk::DebugUtilsLabelEXT labelInfo{};
+        labelInfo.pLabelName = label;
+        _command_buffers[_current_frame].beginDebugUtilsLabelEXT(labelInfo);
+    }
+
+    if (cb) {
+        cb(_command_buffers[_current_frame], user_data);
+    }
+
+    if (labeled) {
+        _command_buffers[_current_frame].endDebugUtilsLabelEXT();
     }
 }
 
@@ -229,47 +340,6 @@ void Stream::_update(const AllocationInfo& dst, size_t offset, size_t size, cons
             return;
     }
     _command_buffers[_current_frame].updateBuffer(dst.buffer, dst.offset + offset, size, data);
-}
-
-void Stream::reset_timestamps(uint32_t first, uint32_t count)
-{
-    if (!_timestamp_pool)
-        return;
-    if (!_recording) {
-        if (begin() != vk::Result::eSuccess)
-            return;
-    }
-    _command_buffers[_current_frame].resetQueryPool(_timestamp_pool, first, count);
-}
-
-void Stream::write_timestamp(uint32_t slot)
-{
-    if (!_timestamp_pool)
-        return;
-    if (!_recording) {
-        if (begin() != vk::Result::eSuccess)
-            return;
-    }
-    _command_buffers[_current_frame].writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands,
-                                                     _timestamp_pool, slot);
-}
-
-std::vector<uint64_t> Stream::read_timestamps(uint32_t first, uint32_t count)
-{
-    std::vector<uint64_t> out(count, 0);
-    if (!_timestamp_pool)
-        return out;
-    auto res = device.getQueryPoolResults(_timestamp_pool, first, count, count * sizeof(uint64_t),
-                                          out.data(), sizeof(uint64_t),
-                                          vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-    if (res != vk::Result::eSuccess) {
-        std::fill(out.begin(), out.end(), 0);
-        return out;
-    }
-    // Convert ticks to nanoseconds.
-    for (auto& t : out)
-        t = static_cast<uint64_t>(static_cast<double>(t) * _timestamp_period);
-    return out;
 }
 
 } // namespace pictor
