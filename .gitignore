@@ -28,6 +28,8 @@ cmake_install.cmake
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake
+!pictor_core/cmake/*.cmake
+!pictor_core/test/*.cmake
 
 # Test/benchmark results
 *.csv
