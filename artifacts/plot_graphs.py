@@ -7,8 +7,9 @@ Usage:
 CSV_DIR contains one file per series, named
 ``<platform>-<system>-<algorithm>.csv`` with ``graph,value`` rows and no
 header. Datasets and systems are selected and ordered below. A system without
-a file for this algorithm is skipped, as is a dataset without a row. Non-numeric
-values such as ``OOM`` and ``TLE`` are drawn as status markers.
+a file for this algorithm is skipped, as is a dataset without a row. Any
+non-numeric value is drawn as an OOM marker; the CSV retains the detailed
+status token.
 """
 
 import argparse
@@ -20,6 +21,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import LogLocator
 
 # Datasets to show, in order: (CSV graph name, tick label).
 DATASETS = [
@@ -57,9 +59,9 @@ STYLE = {
 
 
 def load(path):
-    """Return numeric values and status tokens from a two-column CSV."""
+    """Return numeric values and OOM markers from a two-column CSV."""
     values = {}
-    tokens = {}
+    failures = {}
     with open(path) as fh:
         for line in fh:
             line = line.strip()
@@ -69,8 +71,8 @@ def load(path):
             try:
                 values[graph] = float(value)
             except ValueError:
-                tokens[graph] = value.strip()
-    return values, tokens
+                failures[graph] = "OOM"
+    return values, failures
 
 
 def plot(csv_dir, platform, algorithm, out_path, ylabel):
@@ -79,9 +81,9 @@ def plot(csv_dir, platform, algorithm, out_path, ylabel):
         path = os.path.join(csv_dir, f"{platform}-{system}-{algorithm}.csv")
         if not os.path.exists(path):
             continue
-        values, tokens = load(path)
-        if any(graph in values or graph in tokens for graph, _ in DATASETS):
-            loaded.append((system, label, colour, values, tokens))
+        values, failures = load(path)
+        if any(graph in values or graph in failures for graph, _ in DATASETS):
+            loaded.append((system, label, colour, values, failures))
     if not loaded:
         raise SystemExit(
             f"no {algorithm} data for {platform} with the selected datasets"
@@ -98,13 +100,19 @@ def plot(csv_dir, platform, algorithm, out_path, ylabel):
             f"no positive {algorithm} values for {platform} "
             "with the selected datasets"
         )
-    ymin = 10 ** math.floor(math.log10(min(values) * 0.55))
+    ymin = 1
     ymax = 10 ** math.ceil(math.log10(max(values) * 4))
+    if ymax <= ymin:
+        ymax = ymin * 10
 
     plt.rcParams.update(STYLE)
     fig, ax = plt.subplots(figsize=(15, 7))
     ax.set_yscale("log")
     ax.set_ylim(ymin, ymax)
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0,), numticks=100))
+    ax.yaxis.set_minor_locator(
+        LogLocator(base=10.0, subs=tuple(range(2, 10)), numticks=100)
+    )
 
     reference = next(
         (data for system, _, _, data, _ in loaded if system == REFERENCE), {}
@@ -112,7 +120,7 @@ def plot(csv_dir, platform, algorithm, out_path, ylabel):
     x = np.arange(len(DATASETS))
     width = 0.8 / len(loaded)
     handles = []
-    for i, (system, label, colour, data, tokens) in enumerate(loaded):
+    for i, (system, label, colour, data, failures) in enumerate(loaded):
         xs = x - 0.4 + width * (i + 0.5)
         heights = [data.get(graph, 0) for graph, _ in DATASETS]
         bars = ax.bar(xs, heights, width, color=colour, zorder=3)
@@ -120,14 +128,14 @@ def plot(csv_dir, platform, algorithm, out_path, ylabel):
         handles.append(bars[0])
         for xpos, (graph, _), height in zip(xs, DATASETS, heights):
             if graph not in data:
-                if graph in tokens:
+                if graph in failures:
                     ax.bar(
                         xpos, ymin * 8, width * 0.12, color=colour, zorder=3
                     )
                     ax.text(
                         xpos,
                         ymin * 12,
-                        tokens[graph],
+                        failures[graph],
                         rotation=90,
                         ha="center",
                         va="bottom",
