@@ -97,6 +97,7 @@ uniform KCIn kcIn;
 // it. The seed is a pure cull: the task stage removes the threshold's vertices
 // and returns a zero mesh dispatch.
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE, 1, 1)]
 void kc_task(
     uint3 gid : SV_GroupID,
@@ -204,6 +205,7 @@ void kc_task(
 // that dispatch anyway, the groups return before touching any state, so the
 // cull stays in the task stage.
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
 void kc_mesh(
@@ -292,6 +294,7 @@ void kc_mesh(
 // degree-0 vertices removed with core 0. The non-isolated vertices seed the
 // first survivor list.
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(256, 1, 1)]
 void kc_init_compute(uint3 tid : SV_DispatchThreadID) {
     uint64_t v = uint64_t(tid.y) * kcIn.stride + tid.x;
@@ -334,6 +337,7 @@ struct KCStepIn {
 uniform KCStepIn kcStepIn;
 
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(1, 1, 1)]
 void kc_step_compute(uint3 tid : SV_DispatchThreadID) {
     uint32_t* grid = kcStepIn.grid;

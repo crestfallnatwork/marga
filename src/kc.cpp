@@ -20,8 +20,6 @@ namespace pictor {
 namespace graphs {
 
 namespace {
-// Must match kc.slang.
-constexpr uint32_t cGroupItems  = 128;
 constexpr uint32_t cInitThreads = 256;
 
 constexpr size_t cStateK         = 0;

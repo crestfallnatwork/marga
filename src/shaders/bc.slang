@@ -70,6 +70,7 @@ struct BCFwdIn {
 uniform BCFwdIn bcFwdIn;
 
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE, 1, 1)]
 void bc_fwd_task(
     uint3 gid : SV_GroupID,
@@ -126,6 +127,7 @@ void bc_fwd_task(
 }
 
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
 void bc_fwd_mesh(
@@ -219,6 +221,7 @@ struct BCStepIn {
 uniform BCStepIn bcStepIn;
 
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(1, 1, 1)]
 void bc_step_compute(uint3 tid : SV_DispatchThreadID) {
     // The pending claim count of the previous level is this level's item count
@@ -287,6 +290,7 @@ struct SharedBCBwdPayload {
 groupshared SharedBCBwdPayload bcBwdPayload;
 
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE, 1, 1)]
 void bc_bwdm_task(
     uint3 gid : SV_GroupID,
@@ -344,6 +348,7 @@ void bc_bwdm_task(
 }
 
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
 void bc_bwdm_mesh(
@@ -385,6 +390,7 @@ void bc_bwdm_mesh(
 }
 
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 void bc_bwd_compute(uint3 tid : SV_DispatchThreadID) {
     uint64_t item = uint64_t(tid.y) * bcBwdIn.stride + tid.x;
@@ -423,6 +429,7 @@ void bc_bwd_compute(uint3 tid : SV_DispatchThreadID) {
 // reaches the threshold are collected here, so the warp pass can process each
 // of them with a whole warp and every other item with one thread.
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(256, 1, 1)]
 void bc_bwdh_compute(uint3 tid : SV_DispatchThreadID) {
     uint64_t item = uint64_t(tid.y) * bcBwdIn.stride + tid.x;
@@ -444,6 +451,7 @@ void bc_bwdh_compute(uint3 tid : SV_DispatchThreadID) {
 
 // One warp per hub item: the lanes stride the row, the warp reduces, one store.
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 void bc_bwdw_compute(
     uint3 gid : SV_GroupID,
@@ -497,6 +505,7 @@ struct BCPrepareIn {
 uniform BCPrepareIn bcPrepareIn;
 
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(256, 1, 1)]
 void bc_prepare_compute(uint3 tid : SV_DispatchThreadID) {
     uint64_t v = uint64_t(tid.y) * bcPrepareIn.stride + tid.x;

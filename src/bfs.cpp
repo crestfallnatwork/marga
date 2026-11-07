@@ -61,31 +61,41 @@ void BFS::run(Graph& g, uint32_t src_vertex)
 {
     uint64_t num_vertices = g.num_vertices;
     
+    // The small control buffers and the visited bitmap are allocated before the
+    // graph-sized frontiers: host-side transfers at large heap offsets are not
+    // reliable on all drivers.
+    _frontier_size_a = _ctx.pool_allocator->allocate(sizeof(uint32_t), 256);
+    _frontier_size_b = _ctx.pool_allocator->allocate(sizeof(uint32_t), 256);
+    _indirect_buffer = _ctx.pool_allocator->allocate(4 * sizeof(uint32_t), 256);
+    _staging_size    = _ctx.pinned_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
+    uint64_t visited_size = (num_vertices + 31) / 32 * sizeof(uint32_t);
+    _visited              = _ctx.pool_allocator->allocate(visited_size, 256);
     _frontier_a = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
     _frontier_b = _ctx.pool_allocator->allocate(num_vertices * sizeof(uint32_t), alignof(uint32_t));
-    _frontier_size_a = _ctx.pool_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
-    _frontier_size_b = _ctx.pool_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
-    uint64_t visited_size = (num_vertices + 31) / 32 * sizeof(uint32_t);
-    _visited              = _ctx.pool_allocator->allocate(visited_size, alignof(uint32_t));
-    _indirect_buffer = _ctx.pool_allocator->allocate(4 * sizeof(uint32_t), alignof(uint32_t));
-    _staging_size    = _ctx.pinned_allocator->allocate(sizeof(uint32_t), alignof(uint32_t));
 
     _ctx.fill(_distances, 0xFFFFFFFF);
-    _ctx.fill(_visited, 0);
     _ctx.fill(_frontier_size_a, 1);
     _ctx.fill(_frontier_size_b, 0);
     _ctx.fill(_indirect_buffer, 1);
 
-    uint32_t one  = 1;
     uint32_t zero = 0;
-    _ctx.update(_frontier_a, 0, sizeof(uint32_t), &src_vertex);
-    _ctx.update(_distances, src_vertex * sizeof(uint32_t), sizeof(uint32_t), &zero);
+    _ctx.fill(_frontier_a, src_vertex, 0, sizeof(uint32_t));
+    _ctx.fill(_distances, zero, src_vertex * sizeof(uint32_t), sizeof(uint32_t));
 
     uint32_t word_idx = src_vertex / 32;
     uint32_t mask     = 1 << (src_vertex % 32);
-    _ctx.update(_visited, word_idx * sizeof(uint32_t), sizeof(uint32_t), &mask);
+    _ctx.fill(_visited, 0);
+    _ctx.barrier(_visited, Access::TransferWrite, Access::TransferWrite);
+    _ctx.fill(_visited, mask, word_idx * sizeof(uint32_t), sizeof(uint32_t));
 
     _ctx.fsync();
+
+    // The fills above must be visible to the shaders that follow.
+    _ctx.barrier(_distances, Access::TransferWrite, Access::ReadWrite);
+    _ctx.barrier(_visited, Access::TransferWrite, Access::ReadWrite);
+    _ctx.barrier(_frontier_a, Access::TransferWrite, Access::Read);
+    _ctx.barrier(_frontier_size_a, Access::TransferWrite, Access::ReadWrite);
+    _ctx.barrier(_frontier_size_b, Access::TransferWrite, Access::ReadWrite);
 
     uint32_t current_level                        = 0;
     bool finished                                 = false;

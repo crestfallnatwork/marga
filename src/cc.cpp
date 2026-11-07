@@ -20,8 +20,6 @@ namespace pictor {
 namespace graphs {
 
 namespace {
-// Must match cEdgesPerLane * WAVE_SIZE in cc.slang.
-constexpr uint64_t cTaskEdges = 256;
 
 void split_grid(uint32_t groups, uint32_t& x, uint32_t& y)
 {
@@ -146,7 +144,9 @@ uint32_t CC::run(Graph const& g, bool symmetric_view)
 
         for (uint64_t offset = 0; offset < items; offset += cEdgeBatch) {
             const uint64_t n      = std::min<uint64_t>(cEdgeBatch, items - offset);
-            const uint32_t groups = static_cast<uint32_t>((n + cTaskEdges - 1) / cTaskEdges);
+            // cEdgesPerLane edges per lane, one wave per task group (cc.slang).
+            const uint64_t task_edges = static_cast<uint64_t>(ctx.subgroup_size) * 8;
+            const uint32_t groups     = static_cast<uint32_t>((n + task_edges - 1) / task_edges);
             uint32_t       gx, gy;
             split_grid(groups, gx, gy);
 

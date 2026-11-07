@@ -23,8 +23,6 @@ namespace pictor {
 namespace graphs {
 
 namespace {
-// Must match cItemsPerLane * WAVE_SIZE in bc.slang.
-constexpr uint64_t cTaskItems   = 256;
 constexpr uint32_t cBwdThreads  = 128;
 constexpr uint32_t cHubThreads  = 256;
 constexpr uint32_t cPrepThreads = 256;
@@ -647,7 +645,9 @@ void BC::backward_scatter(Graph const& g, std::vector<uint64_t> const& level_bas
         if (count == 0)
             continue;
 
-        const uint32_t groups = static_cast<uint32_t>((count + cTaskItems - 1) / cTaskItems);
+        // cItemsPerLane items per lane, one wave per task group (bc.slang).
+        const uint64_t task_items = static_cast<uint64_t>(ctx.subgroup_size) * 8;
+        const uint32_t groups   = static_cast<uint32_t>((count + task_items - 1) / task_items);
         uint32_t       gx, gy;
         split_grid(groups, gx, gy);
 

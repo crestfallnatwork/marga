@@ -22,6 +22,7 @@ struct ReductionIn {
 [[vk::push_constant]]
 uniform ReductionIn reduceIn;
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(1024, 1, 1)]
 void reduce(uint32_t threadId : SV_DispatchThreadID,
             uint lid : SV_GroupIndex,
@@ -99,6 +100,7 @@ static const int PageRankVertexCount = 64;
 [[vk::push_constant]]
 uniform PageRankCSCIn prIn;
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(1, 1, 1)]
 void prc_task(
     uint threadId : SV_DispatchThreadID,
@@ -123,6 +125,7 @@ void prc_task(
 
 
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE,1,1)]
 [outputtopology("point")]
 void prc_mesh(
@@ -197,6 +200,7 @@ groupshared DanglingSharedTile danglingTile;
 [[vk::push_constant]]
 uniform DanglingIn danglingIn;
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(1024,1,1)]
 void dangling(uint32_t threadId : SV_DispatchThreadID,
             uint lid : SV_GroupIndex,
@@ -241,6 +245,7 @@ struct OutDegreeIn {
 [[vk::push_constant]]
 uniform OutDegreeIn outDegreeIn;
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(256,1,1)]
 void outdegree(uint32_t threadId: SV_DispatchThreadID) {
     if(threadId >= outDegreeIn.vertices_n) {
@@ -268,6 +273,7 @@ struct DispatchIn {
 uniform DispatchIn dispatchIn;
 [numthreads(1,1,1)]
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 void dispatch() {
     uint* mesh_grid = dispatchIn.mesh_grid;
     uint* reduce_grid = dispatchIn.reduce_grid;

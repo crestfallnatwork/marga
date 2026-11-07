@@ -1,6 +1,6 @@
 GAP-road,82.579
 com-Orkut,133.123
 soc-twitter-2010,101.071
-GAP-twitter,SEGV
+GAP-twitter,OOM
 indochina-2004,164.945
-it-2004,SEGV
+it-2004,OOM

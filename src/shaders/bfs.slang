@@ -26,6 +26,7 @@ static const uint cMaxMeshDim = 65535;
 [[vk::push_constant]]
 uniform BFSIn bfsIn;
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE, 1, 1)]
 void bfs_task(
     uint3 gid : SV_GroupID,
@@ -70,6 +71,7 @@ void bfs_task(
 }
 
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
 void bfs_mesh(
@@ -143,6 +145,7 @@ struct DispatchIn {
 [[vk::push_constant]]
 uniform DispatchIn dispatchIn;
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(1,1,1)]
 void dispatch() {
     uint32_t frontier_size = *dispatchIn.frontier_size;
@@ -169,6 +172,7 @@ void dispatch() {
 [[vk::push_constant]]
 uniform BFSIn bfsInCompute;
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 void compute_bfs(uint3 tid : SV_DispatchThreadID) {
     uint current_size = *bfsInCompute.current_frontier_size;
