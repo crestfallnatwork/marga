@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <iostream>
@@ -66,6 +67,14 @@ int main(int argc, char* argv[])
         duration<double, std::milli>(high_resolution_clock::now() - import_t0).count());
 
     size_t free_mem    = ctx.get_device_free_memory() * 0.95;
+        if (const char* cap = std::getenv("MARGA_HEAP_GIB")) {
+            const size_t gib = std::strtoull(cap, nullptr, 10);
+            if (gib != 0) {
+                const size_t cap_bytes = gib * (size_t{1} << 30);
+                if (free_mem > cap_bytes)
+                    free_mem = cap_bytes;
+            }
+        }
     auto dev_allocator = std::move(
         pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val());
     auto host_allocator = std::move(

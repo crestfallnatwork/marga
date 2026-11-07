@@ -89,6 +89,7 @@ struct CCIn {
 uniform CCIn ccIn;
 
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE, 1, 1)]
 void cc_task(
     uint3 gid : SV_GroupID,
@@ -191,6 +192,7 @@ void cc_task(
 }
 
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
 void cc_mesh(
@@ -244,6 +246,7 @@ struct PrepareIn {
 uniform PrepareIn prepareIn;
 
 [shader("compute")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(256, 1, 1)]
 void prepare(uint3 tid : SV_DispatchThreadID) {
     uint64_t i = uint64_t(tid.y) * prepareIn.stride + tid.x;

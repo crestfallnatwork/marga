@@ -53,6 +53,7 @@ struct TCIn {
 [[vk::push_constant]]
 uniform TCIn tcIn;
 [shader("amplification")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(WAVE_SIZE, 1, 1)]
 void tc_task(
     uint3 gid : SV_GroupID,
@@ -137,6 +138,7 @@ void tc_task(
 }
 
 [shader("mesh")]
+[WaveSize(WAVE_SIZE)]
 [numthreads(128, 1, 1)]
 [outputtopology("point")]
 void tc_mesh(

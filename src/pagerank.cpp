@@ -33,8 +33,8 @@ void PageRank::_allocate_buffers(uint64_t num_vertices, uint64_t num_edges)
                         _ctx.pool_allocator->allocate(sizeof(float) * (num_vertices + 1), 0));
     CheckAllocation(_h_pr_results =
                         _ctx.pinned_allocator->allocate(sizeof(float) * num_vertices, 0));
-    CheckAllocation(indirect_mesh_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
-    CheckAllocation(indirect_reduce_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 0));
+    CheckAllocation(indirect_mesh_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 256));
+    CheckAllocation(indirect_reduce_grid = _ctx.pool_allocator->allocate(sizeof(uint32_t) * 3, 256));
     CheckAllocation(_d_delta = _ctx.pool_allocator->allocate(sizeof(float), 0));
     CheckAllocation(_iterations = _ctx.pool_allocator->allocate(sizeof(uint32_t), 0));
 

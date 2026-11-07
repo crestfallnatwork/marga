@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cstdlib>
 
 int main(int argc, char* argv[])
 {
@@ -47,6 +48,14 @@ int main(int argc, char* argv[])
                                                    drop_self_loops);
             
             size_t free_mem = ctx.get_device_free_memory() * 0.95;
+        if (const char* cap = std::getenv("MARGA_HEAP_GIB")) {
+            const size_t gib = std::strtoull(cap, nullptr, 10);
+            if (gib != 0) {
+                const size_t cap_bytes = gib * (size_t{1} << 30);
+                if (free_mem > cap_bytes)
+                    free_mem = cap_bytes;
+            }
+        }
             ctx.set_device_allocator(std::move(
                 pictor::HeapAllocator::create(&ctx, ctx.root_pool_allocator.get(), free_mem).val()));
             ctx.set_host_allocator(std::move(
