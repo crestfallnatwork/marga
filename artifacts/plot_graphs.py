@@ -1,165 +1,191 @@
+#!/usr/bin/env python3
+"""Plot one benchmark result chart from the per-series CSV artifacts.
+
+Usage:
+    python artifacts/plot_graphs.py CSV_DIR PLATFORM ALGORITHM OUT.png
+
+CSV_DIR contains one file per series, named
+``<platform>-<system>-<algorithm>.csv`` with ``graph,value`` rows and no
+header. Datasets and systems are selected and ordered below. A system without
+a file for this algorithm is skipped, as is a dataset without a row. Non-numeric
+values such as ``OOM`` and ``TLE`` are drawn as status markers.
+"""
+
+import argparse
+import math
 import os
-import pandas as pd
+
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-
-# Directory containing the generated CSV files
-CSV_DIR = "csvs"
-OUTPUT_DIR = "plots"
-
-# The targets and algorithms to generate plots for
-TARGETS = ["4090", "a6000"]
-ALGOS = ["pr", "tc", "bfs", "cc", "bc"]
-
-# 1. Libraries to include in the plots
-LIBRARIES_TO_RENDER = [
-    "cugraph",
-    "gunrock",
-    "graphrtx_optix",
-    "graphrtx_hybrid",
-    "pictor",
+# Datasets to show, in order: (CSV graph name, tick label).
+DATASETS = [
+    ("com-Orkut", "com-Orkut"),
+    ("soc-twitter-2010", "soc-twitter"),
+    ("GAP-twitter", "GAP-twitter"),
+    ("indochina-2004", "indochina"),
+    ("it-2004", "it-2004"),
+    ("GAP-road", "GAP-road"),
 ]
 
-# 2. Display names for libraries
-LIBRARY_NAMES = {
-    "cugraph": "cuGraph",
-    "gunrock": "Gunrock",
-    "pictor": "MARGA",
-    "graphrtx_optix": "GraphRTX (OptiX)",
-    "graphrtx_hybrid": "GraphRTX (Hybrid)",
-}
-
-# 3. Consistent colors for each library
-LIBRARY_COLORS = {
-    "cugraph": "#1f77b4",       # Blue
-    "gunrock": "#ff7f0e",       # Orange
-    "pictor": "#9467bd",        # Purple
-    "graphrtx_optix": "#d62728", # Red
-    "graphrtx_hybrid": "#2ca02c" # Green
-}
-
-# 4. Datasets to include in the plots (change order or comment out to modify)
-DATASETS_TO_RENDER = [
-    "GAP-road", 
-    # "europe_osm", 
-    # "soc-LiveJournal1", 
-    # "hollywood-2009", 
-    "com-Orkut", 
-    "soc-twitter-2010", 
-    "GAP-twitter", 
-    # "com-Friendster", 
-    "indochina-2004", 
-    # "uk-2005", 
-    # "webbase-2001", 
-    "it-2004", 
-    # "GAP-web", 
-    # "delaunay_n24", 
-    "kron_g500-logn21", 
-    # "GAP-kron", 
-    # "GAP-urand"
+# Systems to draw, in order: (CSV system, legend label, colour).
+SERIES = [
+    ("cugraph", "cuGraph", "#1f77b4"),
+    ("gunrock", "Gunrock", "#ff7f0e"),
+    ("graphrtx_hybrid", "GraphRTX", "#2ca02c"),
+    ("pictor", "MARGA", "#9467bd"),
 ]
 
-# 5. Display names for graphs (datasets)
-DATASET_NAMES = {
-    "GAP-road": "GAP-road",
-    "europe_osm": "europe_osm",
-    "soc-LiveJournal1": "soc-LJ1",
-    "hollywood-2009": "hollywood",
-    "com-Orkut": "com-Orkut",
-    "soc-twitter-2010": "soc-twitter",
-    "GAP-twitter": "GAP-twitter",
-    "com-Friendster": "Friendster",
-    "indochina-2004": "indochina",
-    "uk-2005": "uk-2005",
-    "webbase-2001": "webbase",
-    "it-2004": "it-2004",
-    "GAP-web": "GAP-web",
-    "delaunay_n24": "delaunay",
-    "kron_g500-logn21": "kron_g500",
-    "GAP-kron": "GAP-kron",
-    "GAP-urand": "GAP-urand"
+# Speedup labels are drawn for the other systems relative to this one.
+REFERENCE = "pictor"
+
+YLABELS = {"bc": "Time per source (ms, log scale)"}
+DEFAULT_YLABEL = "Time (ms, log scale)"
+
+# Figure style.
+STYLE = {
+    "font.size": 24,
+    "axes.labelsize": 30,
+    "xtick.labelsize": 24,
+    "ytick.labelsize": 24,
+    "legend.fontsize": 24,
+    "axes.linewidth": 1.2,
 }
 
-# =============================================================================
-# SCRIPT LOGIC
-# =============================================================================
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def read_data(target, algo):
-    data = {}
-    for lib in LIBRARIES_TO_RENDER:
-        csv_path = os.path.join(CSV_DIR, f"{target}-{lib}-{algo}.csv")
-        if not os.path.exists(csv_path):
-            continue
-            
-        df = pd.read_csv(csv_path, header=None, names=["Graph", "Time"])
-        
-        # Filter to only the requested datasets
-        df = df[df["Graph"].isin(DATASETS_TO_RENDER)].copy()
-        
-        # Convert Time to numeric; non-numeric values (OOM, Crash, TLE) become NaN
-        # NaN values will simply not be rendered in the matplotlib bar chart.
-        df["Time"] = pd.to_numeric(df["Time"], errors="coerce")
-        
-        # Map dataset names
-        df["Graph"] = df["Graph"].map(lambda x: DATASET_NAMES.get(x, x))
-        
-        df = df.set_index("Graph")
-        data[lib] = df["Time"]
-        
-    if not data:
-        return pd.DataFrame()
-        
-    combined = pd.DataFrame(data)
-    
-    # Reorder rows based on DATASETS_TO_RENDER order to maintain consistent X-axis
-    rendered_names = [DATASET_NAMES.get(d, d) for d in DATASETS_TO_RENDER]
-    valid_names = [n for n in rendered_names if n in combined.index]
-    combined = combined.loc[valid_names]
-    
-    return combined
+def load(path):
+    """Return numeric values and status tokens from a two-column CSV."""
+    values = {}
+    tokens = {}
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            graph, value = line.rsplit(",", 1)
+            try:
+                values[graph] = float(value)
+            except ValueError:
+                tokens[graph] = value.strip()
+    return values, tokens
 
-for target in TARGETS:
-    for algo in ALGOS:
-        df = read_data(target, algo)
-        if df.empty:
-            print(f"Skipping {target}_{algo} (no data)")
+
+def plot(csv_dir, platform, algorithm, out_path, ylabel):
+    loaded = []
+    for system, label, colour in SERIES:
+        path = os.path.join(csv_dir, f"{platform}-{system}-{algorithm}.csv")
+        if not os.path.exists(path):
             continue
-            
-        # Get colors mapping correctly aligned with columns
-        col_colors = [LIBRARY_COLORS.get(col, "#333333") for col in df.columns]
-        
-        # Rename columns for the legend
-        df_plot = df.rename(columns=LIBRARY_NAMES)
-        
-        ax = df_plot.plot(
-            kind='bar',
-            figsize=(15, 7),
-            width=0.8,
-            color=col_colors,
-            logy=True
+        values, tokens = load(path)
+        if any(graph in values or graph in tokens for graph, _ in DATASETS):
+            loaded.append((system, label, colour, values, tokens))
+    if not loaded:
+        raise SystemExit(
+            f"no {algorithm} data for {platform} with the selected datasets"
         )
-        
-        ax.set_ylabel("Time (ms)")
-        ax.set_xlabel("Dataset")
-        ax.set_title(f"Algorithm: {algo.upper()} | Target: {target.upper()}")
-        
-        # Set Y-axis to start from 1
-        ax.set_ylim(bottom=1)
-        
-        # Add a subtle grid on Y-axis
-        ax.grid(True, which="major", ls="-", alpha=0.2, axis='y')
-        ax.grid(True, which="minor", ls="--", alpha=0.1, axis='y')
-        
-        plt.xticks(rotation=45, ha="right")
-        plt.tight_layout()
-        
-        out_path = os.path.join(OUTPUT_DIR, f"{target}_{algo}.png")
-        plt.savefig(out_path, dpi=300)
-        plt.close()
-        print(f"Generated {out_path}")
 
-print("All plots generated successfully.")
+    values = [
+        data[graph]
+        for _, _, _, data, _ in loaded
+        for graph, _ in DATASETS
+        if data.get(graph, 0) > 0
+    ]
+    if not values:
+        raise SystemExit(
+            f"no positive {algorithm} values for {platform} "
+            "with the selected datasets"
+        )
+    ymin = 10 ** math.floor(math.log10(min(values) * 0.55))
+    ymax = 10 ** math.ceil(math.log10(max(values) * 4))
+
+    plt.rcParams.update(STYLE)
+    fig, ax = plt.subplots(figsize=(15, 7))
+    ax.set_yscale("log")
+    ax.set_ylim(ymin, ymax)
+
+    reference = next(
+        (data for system, _, _, data, _ in loaded if system == REFERENCE), {}
+    )
+    x = np.arange(len(DATASETS))
+    width = 0.8 / len(loaded)
+    handles = []
+    for i, (system, label, colour, data, tokens) in enumerate(loaded):
+        xs = x - 0.4 + width * (i + 0.5)
+        heights = [data.get(graph, 0) for graph, _ in DATASETS]
+        bars = ax.bar(xs, heights, width, color=colour, zorder=3)
+        bars[0].set_label(label)
+        handles.append(bars[0])
+        for xpos, (graph, _), height in zip(xs, DATASETS, heights):
+            if graph not in data:
+                if graph in tokens:
+                    ax.bar(
+                        xpos, ymin * 8, width * 0.12, color=colour, zorder=3
+                    )
+                    ax.text(
+                        xpos,
+                        ymin * 12,
+                        tokens[graph],
+                        rotation=90,
+                        ha="center",
+                        va="bottom",
+                        fontsize=18,
+                        color=colour,
+                    )
+                continue
+            if system == REFERENCE:
+                continue
+            base = reference.get(graph, 0)
+            if height > 0 and base > 0:
+                ax.text(
+                    xpos,
+                    height * 1.12,
+                    f"{height / base:.1f}X",
+                    rotation=90,
+                    ha="center",
+                    va="bottom",
+                    fontsize=18,
+                    color="black",
+                )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([label for _, label in DATASETS])
+    ax.set_xlabel("Dataset", labelpad=6)
+    ax.set_ylabel(ylabel)
+    ax.grid(axis="y", which="major", color="0.85", linewidth=0.7, zorder=0)
+    ax.grid(axis="y", which="minor", color="0.93", linewidth=0.5, zorder=0)
+    ax.set_axisbelow(True)
+    fig.legend(
+        handles=handles,
+        loc="upper center",
+        ncol=len(handles),
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.995),
+        handlelength=1.0,
+        columnspacing=1.6,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.savefig(out_path, dpi=300)
+    plt.close(fig)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("csv_dir", help="directory with the series CSVs")
+    parser.add_argument("platform", help="CSV platform prefix, e.g. 4090")
+    parser.add_argument("algorithm", help="CSV algorithm suffix, e.g. bfs")
+    parser.add_argument("out", help="output image path")
+    parser.add_argument("--ylabel", default=None, help="y-axis label")
+    args = parser.parse_args()
+
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    ylabel = args.ylabel or YLABELS.get(args.algorithm, DEFAULT_YLABEL)
+    plot(args.csv_dir, args.platform, args.algorithm, args.out, ylabel)
+
+
+if __name__ == "__main__":
+    main()

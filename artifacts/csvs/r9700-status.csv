@@ -1,0 +1,31 @@
+graph,algo,system,status,note
+GAP-road,bfs,gunrock,ok,"mean over 64 sources; JSON grt-bfs-GAP-road.json; wall 74 s; E 57,708,624"
+com-Orkut,bfs,gunrock,ok,"mean over 64 sources; full com-Orkut.mtx, E 234,370,166; wall 46 s; first attempt used com-Orkut_Communities_top5000.mtx (E 1,078,576) and was discarded"
+soc-twitter-2010,bfs,gunrock,ok,"mean over 64 sources; JSON grt-bfs-soc-twitter-2010.json; wall 142 s; E 530,051,354"
+GAP-twitter,bfs,gunrock,ok,"mean over 64 sources; JSON grt-bfs-GAP-twitter.json; wall 63 s; MARGA-importer .csr (12 GB, 1,468,364,884 edges)"
+indochina-2004,bfs,gunrock,ok,"mean over 64 sources; JSON grt-bfs-indochina-2004.json; wall 49 s; E 194,109,311; min/max are source extremes"
+it-2004,bfs,gunrock,ok,"mean over 64 sources; JSON grt-bfs-it-2004.json; wall 297 s; E 1,150,725,436; sd 18.7463"
+GAP-road,pr,gunrock,ok,3 runs in one process; JSON grt-pr-GAP-road.json; .mtx.csr
+com-Orkut,pr,gunrock,ok,3 runs; JSON grt-pr-com-Orkut.json; .mtx.csr; .mtx one-run check 1345.35 ms
+soc-twitter-2010,pr,gunrock,ok,3 runs; JSON grt-pr-soc-twitter-2010.json; .mtx.csr
+GAP-twitter,pr,gunrock,ok,3 runs; JSON grt-pr-GAP-twitter.json; wall 42 s; MARGA-importer .csr
+indochina-2004,pr,gunrock,ok,3 runs; JSON grt-pr-indochina-2004.json; .mtx.csr
+it-2004,pr,gunrock,ok,3 runs; JSON grt-pr-it-2004.json; wall 182 s; .mtx.csr 8.8 GB
+GAP-road,tc,gunrock,ok,"1 process, -r true, symmetric .mtx.csr; wall 1 s"
+com-Orkut,tc,gunrock,ok,"1 process, -r true, symmetric .mtx.csr; wall 6 s"
+soc-twitter-2010,tc,gunrock,ok,"1 process, -r true, symmetric .mtx.csr; wall 186 s; triangles 3x MARGA (51,886,938,030 / 17,295,646,010 = 3.0)"
+GAP-twitter,tc,gunrock,TLE,"1250 s cap (20.8 min active); symmetric 2,405,026,092 edges (uint32 CSR); no GPU time"
+indochina-2004,tc,gunrock,ok,"symmetric view (304,472,122 edges); 1 process; wall 33 s; directed run 18,422.2 ms / 170,772,835,828 discarded (unfair view)"
+it-2004,tc,gunrock,TLE,"1150 s cap; completed at 976702 ms (976.7 s), above the 15-minute threshold; triangles 145123653162; wall 997 s; recorded TLE; 4090 OOM on this view"
+GAP-road,kc,gunrock,ok,GPU time; degeneracy 3; errors 0; CPU 3795.89 ms; wall 6 s
+com-Orkut,kc,gunrock,ok,GPU time; degeneracy 253; errors 0; CPU 4778.42 ms; wall 11 s
+soc-twitter-2010,kc,gunrock,ok,GPU time; degeneracy 1695; errors 0; CPU 10025.1 ms; wall 57 s
+GAP-twitter,kc,gunrock,TLE,"1250 s cap (20.8 min active); directed 12 GB CSR; graph loaded (V 61,578,415, E 1,468,364,884); no GPU time"
+indochina-2004,kc,gunrock,ok,GPU time; degeneracy 6868; errors 0; CPU 25897.8 ms; wall 79 s
+it-2004,kc,gunrock,ok,1150 s cap; directed .mtx.csr 8.8 GB; GPU 260620 ms; CPU 555505 ms; errors 0; degeneracy 9963; wall 832 s
+GAP-road,bc,gunrock,OOM,HIP backend: merge_path_v2 NVIDIA-only; thread_mapped segfaults; block_mapped hipErrorInvalidConfiguration
+com-Orkut,bc,gunrock,OOM,same
+soc-twitter-2010,bc,gunrock,OOM,same
+GAP-twitter,bc,gunrock,OOM,same
+indochina-2004,bc,gunrock,OOM,same
+it-2004,bc,gunrock,OOM,same

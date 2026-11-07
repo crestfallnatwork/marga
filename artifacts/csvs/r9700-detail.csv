@@ -1,0 +1,37 @@
+graph,algo,k,sources,runs,per_run_ms,avg_ms,min_ms,max_ms,spread_pct,checksum,import_ms,wall_s,status,note
+GAP-road,cc,0,0,3,,13.143,,,,,,,ok,matrix run; per-run in /root/results/cc-GAP-road.log
+GAP-road,bfs,0,64,64,,921.063,,,,,,,ok,mean over 64 sources; per-source in log
+GAP-road,tc,0,0,3,,40.6482,,,,,,,ok,matrix run
+GAP-road,bc,16,16,3,,1808.232,,,,,-nan,,ok,sum over 16 strided sources
+GAP-road,kc,0,0,5,,36.889,,,,,40870583,,ok,mean of 5 one-run processes
+GAP-road,pr,0,0,3,,127.599,,,,,,,ok,matrix run
+com-Orkut,cc,0,0,3,,15.609,,,,,,,ok,matrix run
+com-Orkut,bfs,0,64,64,,7.3998,,,,,,,ok,mean over 64 sources; per-source in log
+com-Orkut,tc,0,0,3,,373.331,,,,,,,ok,matrix run
+com-Orkut,bc,64,64,3,,3287.815,,,,,326009.991945,,ok,sum over 64 strided sources
+com-Orkut,kc,0,0,5,,332.584,,,,,119326006,,ok,mean of 5 one-run processes
+com-Orkut,pr,0,0,3,,537.474,,,,,,,ok,matrix run
+indochina-2004,cc,0,0,3,,40.127,,,,,,,ok,matrix run
+indochina-2004,bfs,0,64,64,,9.17798,,,,,,,ok,mean over 64 sources; per-source in log
+indochina-2004,tc,0,0,3,,2409.54,,,,,,,ok,matrix run
+indochina-2004,bc,32,32,3,,573.109,,,,,751856.107124,,ok,sum over 32 strided sources
+indochina-2004,kc,0,0,9,"721.213;908.482;708.481;807.408;776.099;735.667;995.513;644.477;694.714",776.895,644.477,995.513,45.18,194031677,,,ok,one run/process; median 735.667; 721 was a low sample
+indochina-2004,pr,0,0,3,"623.765;617.6;623.193",621.519,617.6,623.765,0.99,,,9,ok,CSC; 29 iterations
+soc-twitter-2010,cc,0,0,3,"53.082;44.953;47.285",48.440,44.953,53.082,16.78,,,,22,ok,1 component; first attempt discarded (loss line)
+soc-twitter-2010,bfs,0,64,64,,37.6188,,,,,,23,ok,mean over 64 sources; per-source in log
+soc-twitter-2010,tc,0,0,3,"5731.05;5750.28;5764.23",5748.52,5731.05,5764.23,0.58,17295646010,,39,ok,
+soc-twitter-2010,bc,16,16,3,"3459.250;3464.402;3453.290",3458.980,3453.290,3464.402,0.32,,17911.788,33,ok,16 live; 19 levels; checksum varies (last 338094.886657)
+soc-twitter-2010,kc,0,0,5,"505.106;570.027;602.629;590.405;890.765",631.786,505.106,890.765,61.04,270748662,,23,ok,one run/process; median 590.405; max core 1695
+soc-twitter-2010,pr,0,0,3,"28.3304;27.615;27.9378",27.9611,27.615,28.3304,2.56,,,21,ok,8 iterations
+it-2004,cc,0,0,3,"264.605;225.575;200.195",230.125,200.195,264.605,27.99,,,,35,ok,979 components
+it-2004,bfs,0,64,64,,39.0037,,,,,,27,ok,mean over 64 sources; per-source in log
+it-2004,tc,0,0,3,"2897.88;2905.71;2914.78",2906.12,2897.88,2914.78,0.58,44079583758,,46,ok,
+it-2004,bc,8,8,3,"622.628;614.886;617.700",618.405,614.886,622.628,1.25,,19053.574,26,ok,8 sampled/7 live; 61 levels; checksum varies (last 291985.210634)
+it-2004,kc,0,0,5,"2817.464;3158.883;2691.816;3073.046;2736.729",2895.588,2691.816,3158.883,16.13,1175770456,,41,ok,one run/process; median 2817.464; max core 3224
+it-2004,pr,0,0,3,"759.015;766.291;755.973",760.426,755.973,766.291,1.36,,,24,ok,20 iterations
+GAP-twitter,cc,0,0,3,"325.702;296.114;295.542",305.786,295.542,325.702,9.86,,,,63,ok,19926186 components
+GAP-twitter,bfs,0,64,64,,87.422,,,,,,53,ok,mean over 64 sources; per-source in log
+GAP-twitter,tc,0,0,3,"21073.6;21083;21140.2",21098.9,21073.6,21140.2,0.32,34824916864,,132,ok,
+GAP-twitter,bc,4,4,3,"2919.972;2912.589;2917.891",2916.817,2912.589,2919.972,0.25,,45176.478,58,ok,4 sampled/3 live; 14 levels; checksum varies (last 9437.709674)
+GAP-twitter,kc,0,0,5,"1872.925;1852.354;2067.165;1949.009;1850.957",1918.482,1850.957,2067.165,11.27,1209794288,,69,ok,one run/process; median 1872.925; checksum/phases vary; max core 2497/2498
+GAP-twitter,pr,0,0,3,"125.881;123.007;123.522",124.137,123.007,125.881,2.32,,,28,ok,9 iterations

@@ -1,0 +1,31 @@
+graph,algo,runs,per_run_ms,avg_ms,min_ms,max_ms,spread_pct,checksum,status,note
+GAP-road,bfs,64,,925.3116,627.5747,1173.8573,59.04,,ok,"mean over 64 sources; JSON grt-bfs-GAP-road.json; wall 74 s; E 57,708,624"
+com-Orkut,bfs,64,,21.8044,17.7204,25.4887,35.63,,ok,"mean over 64 sources; full com-Orkut.mtx, E 234,370,166; wall 46 s; first attempt used com-Orkut_Communities_top5000.mtx (E 1,078,576) and was discarded"
+indochina-2004,bfs,64,,17.0657,0.2031,36.6927,213.84,,ok,"mean over 64 sources; JSON grt-bfs-indochina-2004.json; wall 49 s; E 194,109,311; min/max are source extremes"
+soc-twitter-2010,bfs,64,,104.4363,93.6385,133.0884,37.77,,ok,"mean over 64 sources; JSON grt-bfs-soc-twitter-2010.json; wall 142 s; E 530,051,354"
+it-2004,bfs,64,,58.9788,0.2612,69.2589,117.02,,ok,"mean over 64 sources; JSON grt-bfs-it-2004.json; wall 297 s; E 1,150,725,436; sd 18.7463"
+GAP-twitter,bfs,64,,568.7349,508.3310,957.2756,78.94,,ok,"mean over 64 sources; JSON grt-bfs-GAP-twitter.json; wall 63 s; MARGA-importer .csr (12 GB, 1,468,364,884 edges)"
+GAP-road,pr,3,,11.8653,11.7235,12.1472,3.57,,ok,3 runs in one process; JSON grt-pr-GAP-road.json; .mtx.csr
+com-Orkut,pr,3,,1383.2706,1379.4052,1388.3126,0.64,,ok,3 runs; JSON grt-pr-com-Orkut.json; .mtx.csr; .mtx one-run check 1345.35 ms
+indochina-2004,pr,3,,8539.9102,8528.5479,8552.3721,0.28,,ok,3 runs; JSON grt-pr-indochina-2004.json; .mtx.csr
+soc-twitter-2010,pr,3,,5038.3633,5033.3511,5041.2148,0.16,,ok,3 runs; JSON grt-pr-soc-twitter-2010.json; .mtx.csr
+it-2004,pr,3,,56587.6133,56496.4922,56710.1328,0.38,,ok,3 runs; JSON grt-pr-it-2004.json; wall 182 s; .mtx.csr 8.8 GB
+GAP-twitter,pr,3,,8440.5723,8433.5596,8451.1816,0.21,,ok,3 runs; JSON grt-pr-GAP-twitter.json; wall 42 s; MARGA-importer .csr
+GAP-road,tc,1,,5.7348,,,,1316412,ok,"1 process, -r true, symmetric .mtx.csr; wall 1 s"
+com-Orkut,tc,1,,3634.2,,,,1882752543,ok,"1 process, -r true, symmetric .mtx.csr; wall 6 s"
+soc-twitter-2010,tc,1,,181021,,,,51886938030,ok,"1 process, -r true, symmetric .mtx.csr; wall 186 s; triangles 3x MARGA (51,886,938,030 / 17,295,646,010 = 3.0)"
+indochina-2004,tc,1,,28770.6,,,,180346684116,ok,"symmetric view (304,472,122 edges); 1 process; wall 33 s; directed run 18,422.2 ms / 170,772,835,828 discarded (unfair view)"
+it-2004,tc,1,,976702,,,,145123653162,TLE,"1150 s cap; completed at 976702 ms (976.7 s), above the 15-minute threshold; triangles 145123653162; wall 997 s; recorded TLE; 4090 OOM on this view"
+GAP-twitter,tc,1,,,,,,,TLE,"1250 s cap (20.8 min active); symmetric 2,405,026,092 edges (uint32 CSR); no GPU time"
+GAP-road,kc,1,,127.664,,,,3,ok,GPU time; degeneracy 3; errors 0; CPU 3795.89 ms; wall 6 s
+com-Orkut,kc,1,,2980.09,,,,253,ok,GPU time; degeneracy 253; errors 0; CPU 4778.42 ms; wall 11 s
+indochina-2004,kc,1,,50341.7,,,,6868,ok,GPU time; degeneracy 6868; errors 0; CPU 25897.8 ms; wall 79 s
+soc-twitter-2010,kc,1,,38786.1,,,,1695,ok,GPU time; degeneracy 1695; errors 0; CPU 10025.1 ms; wall 57 s
+it-2004,kc,1,,260620,,,,9963,ok,1150 s cap; directed .mtx.csr 8.8 GB; GPU 260620 ms; CPU 555505 ms; errors 0; degeneracy 9963; wall 832 s
+GAP-twitter,kc,1,,,,,,,TLE,"1250 s cap (20.8 min active); directed 12 GB CSR; graph loaded (V 61,578,415, E 1,468,364,884); no GPU time"
+GAP-road,bc,0,,,,,,,OOM,HIP backend: merge_path_v2 NVIDIA-only; thread_mapped segfaults; block_mapped hipErrorInvalidConfiguration
+com-Orkut,bc,0,,,,,,,OOM,same
+indochina-2004,bc,0,,,,,,,OOM,same
+soc-twitter-2010,bc,0,,,,,,,OOM,same
+it-2004,bc,0,,,,,,,OOM,same
+GAP-twitter,bc,0,,,,,,,OOM,same
