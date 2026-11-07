@@ -30,7 +30,6 @@ DATASETS = [
     ("GAP-twitter", "GAP-twitter"),
     ("indochina-2004", "indochina"),
     ("it-2004", "it-2004"),
-    ("GAP-road", "GAP-road"),
 ]
 
 # Systems to draw, in order: (CSV system, legend label, colour).
