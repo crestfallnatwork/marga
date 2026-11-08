@@ -55,7 +55,6 @@ ALGORITHMS = [
     ("pr", "PR"),
 ]
 
-YLABELS = {"bc": "Time per source (ms, log scale)"}
 DEFAULT_YLABEL = "Time (ms, log scale)"
 
 # Figure style.
@@ -319,7 +318,7 @@ def main():
             args.csv_dir, args.platform, args.algorithm, args.out, ylabel
         )
     else:
-        ylabel = args.ylabel or YLABELS.get(args.algorithm, DEFAULT_YLABEL)
+        ylabel = args.ylabel or DEFAULT_YLABEL
         plot(args.csv_dir, args.platform, args.algorithm, args.out, ylabel)
 
 

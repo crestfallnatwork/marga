@@ -21,12 +21,19 @@ import numpy as np
 from matplotlib.ticker import LogLocator
 
 EXCLUDED = {"GAP-road"}
+DATASET_LABELS = {
+    "com-Orkut": "com-Orkut",
+    "soc-twitter-2010": "soc-twitter",
+    "GAP-twitter": "GAP-twitter",
+    "indochina-2004": "indochina",
+    "it-2004": "it-2004",
+}
 PHASE_ORDER = [
-    "GAP-twitter",
-    "it-2004",
-    "soc-twitter-2010",
     "com-Orkut",
+    "soc-twitter-2010",
+    "GAP-twitter",
     "indochina-2004",
+    "it-2004",
 ]
 
 STYLE = {
@@ -108,7 +115,7 @@ def grouped(rows, out_path, series, labels):
                 )
 
     ax.set_xticks(x)
-    ax.set_xticklabels(graphs)
+    ax.set_xticklabels([DATASET_LABELS.get(graph, graph) for graph in graphs])
     ax.set_xlabel("Dataset", labelpad=6)
     ax.set_ylabel("Time (ms, log scale)")
     fig.legend(
@@ -130,7 +137,7 @@ def phases(rows, out_path):
     graphs = [graph for graph in PHASE_ORDER if graph in by_graph]
     parts = [
         ("task", "Task", COLOURS["task"]),
-        ("machinery", "Dispatch machinery", COLOURS["machinery"]),
+        ("machinery", "Pipeline Bookkeeping", COLOURS["machinery"]),
         ("mesh", "Mesh", COLOURS["mesh"]),
     ]
     totals = np.array(
@@ -166,7 +173,7 @@ def phases(rows, out_path):
         )
 
     ax.set_yticks(y)
-    ax.set_yticklabels(graphs)
+    ax.set_yticklabels([DATASET_LABELS.get(graph, graph) for graph in graphs])
     ax.invert_yaxis()
     ax.set_xlim(0, 100)
     ax.set_xticks([0, 50, 100])
