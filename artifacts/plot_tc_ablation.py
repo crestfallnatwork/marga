@@ -234,7 +234,7 @@ def combined(rows, out_path):
         (
             "(c) MSP Pipeline",
             [
-                ("static_bounded_pre", "compute + prune", COLOURS["compute_prune"]),
+                ("static_bounded_pre_run", "compute + prune", COLOURS["compute_prune"]),
                 ("marga", "MARGA", COLOURS["marga"]),
             ],
         ),
