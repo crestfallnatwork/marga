@@ -54,7 +54,7 @@ STYLE = {
 
 COMBINED_STYLE = {
     "font.size": 18,
-    "axes.labelsize": 26,
+    "axes.labelsize": 18,
     "xtick.labelsize": 16,
     "ytick.labelsize": 16,
     "legend.fontsize": 16,
@@ -277,10 +277,10 @@ def combined(rows, out_path):
 
         ax.set_xticks(x)
         ax.set_xticklabels([COMBINED_LABELS.get(graph, graph) for graph in graphs])
-        ax.set_title(title, fontweight="bold")
+        ax.set_title(title, fontweight="bold", pad=28)
 
     axes[0].set_ylabel("Time (ms, log scale)")
-    fig.supxlabel("Dataset", fontsize=26, y=0.02)
+    fig.supxlabel("Dataset", fontsize=18, y=0.02)
 
     order = ["compute", "compute + prune", "MARGA, no cull", "MARGA"]
     fig.legend(
@@ -293,7 +293,7 @@ def combined(rows, out_path):
         handlelength=1.0,
         columnspacing=1.6,
     )
-    fig.tight_layout(rect=[0, 0.03, 1, 0.85])
+    fig.tight_layout(rect=[0, 0.03, 1, 0.80])
     fig.subplots_adjust(wspace=0.06)
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
