@@ -241,14 +241,14 @@ def combined(rows, out_path):
     ]
 
     plt.rcParams.update(COMBINED_STYLE)
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5.6), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 7.0), sharey=True)
     x = np.arange(len(graphs))
     width = 0.38
     handles = {}
 
     for ax, (title, series) in zip(axes, panels):
         ax.set_yscale("log")
-        ax.set_ylim(1, 1e6)
+        ax.set_ylim(1, 1e7)
         ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0,), numticks=100))
         ax.yaxis.set_minor_locator(
             LogLocator(base=10.0, subs=tuple(range(2, 10)), numticks=100)
@@ -277,7 +277,7 @@ def combined(rows, out_path):
 
         ax.set_xticks(x)
         ax.set_xticklabels([COMBINED_LABELS.get(graph, graph) for graph in graphs])
-        ax.set_title(title, fontweight="bold", pad=28)
+        ax.set_title(title, fontweight="bold", pad=10)
 
     axes[0].set_ylabel("Time (ms, log scale)")
     fig.supxlabel("Dataset", fontsize=18, y=0.02)
@@ -289,11 +289,12 @@ def combined(rows, out_path):
         loc="upper center",
         ncol=4,
         frameon=False,
-        bbox_to_anchor=(0.5, 0.995),
-        handlelength=1.0,
-        columnspacing=1.6,
+        bbox_to_anchor=(0.5, 0.985),
+        handlelength=0.9,
+        handletextpad=0.4,
+        columnspacing=0.8,
     )
-    fig.tight_layout(rect=[0, 0.03, 1, 0.80])
+    fig.tight_layout(rect=[0, 0.03, 1, 0.90])
     fig.subplots_adjust(wspace=0.06)
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
