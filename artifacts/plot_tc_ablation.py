@@ -280,7 +280,7 @@ def combined(rows, out_path):
         ax.set_title(title, fontweight="bold", pad=10)
 
     axes[0].set_ylabel("Time (ms, log scale)")
-    fig.supxlabel("Dataset", fontsize=18, y=0.02)
+    axes[1].set_xlabel("Dataset", labelpad=8)
 
     order = ["compute", "compute + prune", "MARGA, no cull", "MARGA"]
     fig.legend(
@@ -294,7 +294,7 @@ def combined(rows, out_path):
         handletextpad=0.4,
         columnspacing=0.8,
     )
-    fig.tight_layout(rect=[0, 0.03, 1, 0.90])
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
     fig.subplots_adjust(wspace=0.06)
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
