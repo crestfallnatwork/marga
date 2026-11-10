@@ -115,7 +115,7 @@ void BC::release()
     drop(ctx, d_probe);
 }
 
-uint32_t BC::choose_sources(uint64_t num_vertices, size_t pool_bytes)
+uint32_t BC::choose_batch(uint64_t num_vertices, size_t pool_bytes)
 {
     // 16 B per (source, vertex) record plus an 8 B frontier entry when all
     // sources of a group share one frontier.
@@ -235,7 +235,7 @@ void BC::seed_frontier(uint32_t first_source, uint32_t last_source)
     ctx.barrier(d_frontier, Access::TransferWrite, Access::Read);
 }
 
-uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t levels_per_submit,
+uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t levels_per_submit,
                  bool scatter_backward, uint32_t hub_degree)
 {
     using namespace std::chrono;
@@ -288,22 +288,26 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
         if (g.row_offsets[v + 1] > g.row_offsets[v])
             live_sources_.push_back(v);
     }
-    rows_ = static_cast<uint32_t>(live_sources_.size());
-    // Group size: how many sources share one frontier and one pass over their
-    // records. A group's record rows are the working set a level reads
-    // successors from, and a level reuses them only while they stay around a
-    // cache's worth, so a small group can be worth more than the level
+    // The caller supplies the sampled source set; the batch that fits the pool
+    // is chosen here and is not part of the interface.
+    batch_ = std::min<uint32_t>(choose_batch(num_vertices_, pool_bytes_),
+                                static_cast<uint32_t>(live_sources_.size()));
+    if (batch_ == 0)
+        batch_ = 1;
+
+    // Group size: how many sources of a batch share one frontier and one pass
+    // over their records. A group's record rows are the working set a level
+    // reads successors from, and a level reuses them only while they stay
+    // around a cache's worth, so a small group can be worth more than the level
     // dispatches it costs. Past twice that budget the reads miss at any group
-    // size, so all sources are fused and the dispatches are minimised.
+    // size, so the batch is fused and the dispatches are minimised.
     constexpr uint64_t cGroupRowBytes = 72ull << 20;
-    if (group == 0) {
+    {
         const uint64_t row_bytes = num_vertices_ * cRecordBytes;
         uint64_t       g         = cGroupRowBytes / (row_bytes ? row_bytes : 1);
         if (row_bytes > 2 * cGroupRowBytes)
-            g = rows_;
-        group_ = static_cast<uint32_t>(std::max<uint64_t>(1, std::min<uint64_t>(g, rows_)));
-    } else {
-        group_ = std::max<uint32_t>(1, std::min<uint32_t>(group, std::max<uint32_t>(rows_, 1u)));
+            g = batch_;
+        group_ = static_cast<uint32_t>(std::max<uint64_t>(1, std::min<uint64_t>(g, batch_)));
     }
     levels_per_submit_ = std::max<uint32_t>(1, levels_per_submit);
     scatter_backward_  = scatter_backward;
@@ -314,7 +318,7 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
     // and only the extreme outliers are worth expanding, since packing 32 items
     // per warp is otherwise the cheaper form. 0 selects this rule.
     hub_threshold_ = 0;
-    if (rows_ > 0 && g.num_edges >= 8 * num_vertices_) {
+    if (!live_sources_.empty() && g.num_edges >= 8 * num_vertices_) {
         if (hub_degree != 0) {
             hub_threshold_ = hub_degree;
         } else {
@@ -324,33 +328,40 @@ uint32_t BC::run(Graph const& g, uint32_t sources, uint32_t group, uint32_t leve
     }
 
     const auto init_t0 = high_resolution_clock::now();
-    if (rows_ == 0) {
+    if (live_sources_.empty()) {
         init_ms_ = duration<double, std::milli>(high_resolution_clock::now() - init_t0).count();
         return 0;
     }
 
-    allocate(num_vertices_, rows_, group_);
+    allocate(num_vertices_, batch_, group_);
 
-    // Row -> source vertex, used by the prepare pass and the frontier seed.
-    std::memcpy(h_sources.mappedPtr, live_sources_.data(), rows_ * sizeof(uint32_t));
-    ctx.barrier(d_sources, Access::Read, Access::TransferWrite);
-    ctx.update(d_sources, 0, rows_ * sizeof(uint32_t), live_sources_.data());
-    ctx.barrier(d_sources, Access::TransferWrite, Access::Read);
+    for (uint32_t b0 = 0; b0 < static_cast<uint32_t>(live_sources_.size()); b0 += batch_) {
+        batch_first_ = b0;
+        rows_ = std::min<uint32_t>(batch_, static_cast<uint32_t>(live_sources_.size()) - b0);
 
-    prepare(rows_);
-    ctx.fsync();
-    init_ms_ = duration<double, std::milli>(high_resolution_clock::now() - init_t0).count();
+        // Row -> source vertex of this batch, used by the prepare pass and the
+        // frontier seed.
+        std::memcpy(h_sources.mappedPtr, live_sources_.data() + b0, rows_ * sizeof(uint32_t));
+        ctx.barrier(d_sources, Access::Read, Access::TransferWrite);
+        ctx.update(d_sources, 0, rows_ * sizeof(uint32_t), live_sources_.data() + b0);
+        ctx.barrier(d_sources, Access::TransferWrite, Access::Read);
 
-    for (uint32_t s0 = 0; s0 < rows_; s0 += group_) {
-        const uint32_t        s1 = std::min(s0 + group_, rows_);
-        std::vector<uint64_t> level_base;
-        std::vector<uint64_t> level_count;
+        prepare(rows_);
+        ctx.fsync();
+        if (b0 == 0)
+            init_ms_ = duration<double, std::milli>(high_resolution_clock::now() - init_t0).count();
 
-        levels_ = std::max(levels_, forward(g, s0, s1, level_base, level_count));
-        if (scatter_backward_)
-            backward_scatter(g, level_base, level_count);
-        else
-            backward(g, level_base, level_count);
+        for (uint32_t s0 = 0; s0 < rows_; s0 += group_) {
+            const uint32_t        s1 = std::min(s0 + group_, rows_);
+            std::vector<uint64_t> level_base;
+            std::vector<uint64_t> level_count;
+
+            levels_ = std::max(levels_, forward(g, s0, s1, level_base, level_count));
+            if (scatter_backward_)
+                backward_scatter(g, level_base, level_count);
+            else
+                backward(g, level_base, level_count);
+        }
     }
 
     ctx.fsync();
@@ -673,7 +684,10 @@ void BC::backward_scatter(Graph const& g, std::vector<uint64_t> const& level_bas
 
 std::vector<uint32_t> BC::source_list() const
 {
-    return live_sources_;
+    const uint32_t end = std::min<uint32_t>(batch_first_ + rows_,
+                                            static_cast<uint32_t>(live_sources_.size()));
+    return std::vector<uint32_t>(live_sources_.begin() + batch_first_,
+                                 live_sources_.begin() + end);
 }
 
 std::vector<float> BC::copy_delta(uint64_t vertex_offset, uint64_t count)

@@ -32,8 +32,7 @@ int main(int argc, char* argv[])
     bool        validate    = false;
     bool        sym         = false;
     uint32_t    num_runs    = 1;
-    uint32_t    num_sources = 0;
-    uint32_t    group_size  = 0;
+    uint32_t    num_sources = 64;
     uint32_t    levels_per_submit = 8;
     uint32_t    hub_degree    = 0;
     std::string backward_mode = "gather";
@@ -43,10 +42,8 @@ int main(int argc, char* argv[])
         value("graph file", graph_file) % "MTX graph file to process",
         (option("-n", "--num-runs") & value("number of runs", num_runs)) %
             "number of times to run the benchmark",
-        (option("-k", "--sources") & value("sources", num_sources)) %
-            "number of strided sources (default: largest of 64/32/16/8/4 that fits)",
-        (option("-g", "--group") & value("sources per dispatch", group_size)) %
-            "sources sharing one frontier and dispatch (default: from the record set size)",
+        (option("--sources") & value("sources", num_sources)) %
+            "number of strided sources to sample (default: 64)",
         (option("-b", "--batch") & value("levels per submit", levels_per_submit)) %
             "forward levels per host submission (1 = one fence wait per level)",
         (option("-B", "--backward") & value("gather|scatter", backward_mode)) %
@@ -102,10 +99,9 @@ int main(int argc, char* argv[])
     std::cout << std::format("Device pool: {:.2f} GiB\n", free_mem / 1073741824.0);
 
     if (num_sources == 0)
-        num_sources = pictor::graphs::BC::choose_sources(g.num_vertices, free_mem);
-    std::cout << std::format("Sources: {} (strided, i * V / k), {} per fused dispatch\n",
-                             num_sources,
-                             group_size ? std::to_string(group_size) : std::string("auto"));
+        num_sources = 64;
+    std::cout << std::format("Sources: {} (strided, i * V / k), internal batch from the pool\n",
+                             num_sources);
 
     pictor::graphs::BC bc(ctx, free_mem);
 
@@ -121,13 +117,14 @@ int main(int argc, char* argv[])
     std::cout << std::format("Running BC {} times...\n", num_runs);
     for (uint32_t run = 0; run < num_runs; ++run) {
         const auto t1 = high_resolution_clock::now();
-        levels        = bc.run(g, num_sources, group_size, levels_per_submit,
+        levels        = bc.run(g, num_sources, levels_per_submit,
                                backward_mode == "scatter", hub_degree);
         const auto t2 = high_resolution_clock::now();
 
         const double ms = duration<double, std::milli>(t2 - t1).count();
 
-        // Checksum over a fixed window of every source (raw delta, unnormalized).
+        // Checksum over a fixed window of each source in the batch processed
+        // last (raw delta, unnormalized).
         const std::vector<float> sample = bc.copy_delta(checksum_offset, checksum_count);
         double                   checksum = 0.0;
         for (float v : sample)
@@ -151,16 +148,16 @@ int main(int argc, char* argv[])
     std::cout << std::format("  Average BC forward:  {:.3f} ms\n", fwd_ms / num_runs);
     std::cout << std::format("  Average BC backward: {:.3f} ms\n", bwd_ms / num_runs);
     std::cout << std::format("  Levels:              {}\n", levels);
-    std::cout << std::format("  Sources:             {} sampled (group {}, {} levels per submit, {} "
-                             "backward), {} live\n",
-                             bc.num_sources(), bc.group_size(), levels_per_submit, backward_mode,
-                             bc.live_sources());
+    std::cout << std::format("  Sources:             {} sampled (batch {}, group {}, {} levels per "
+                             "submit, {} backward), {} live in the last batch\n",
+                             bc.num_sources(), bc.batch_size(), bc.group_size(), levels_per_submit,
+                             backward_mode, bc.live_sources());
     std::cout << std::format("  Hub expansion:       out-degree >= {}\n", bc.hub_threshold());
     std::cout << std::format("  Frontier entries:    {} of {} ({:.2f} GiB records, {:.2f} GiB "
                              "frontier)\n",
                              bc.frontier_peak(),
                              static_cast<uint64_t>(g.num_vertices) * bc.group_size(),
-                             static_cast<double>(g.num_vertices) * bc.num_sources() * 16.0 /
+                             static_cast<double>(g.num_vertices) * bc.batch_size() * 16.0 /
                                  1073741824.0,
                              static_cast<double>(g.num_vertices) * bc.group_size() * 8.0 /
                                  1073741824.0);
@@ -198,8 +195,8 @@ int main(int argc, char* argv[])
             ok      = ok && (cmp.exceeding == 0);
         }
 
-        std::cout << std::format("CPU reference: {} values compared over {} sources, max relative "
-                                 "deviation {:.3e} (tolerance 1e-3)\n",
+        std::cout << std::format("CPU reference: {} values compared over {} sources (last batch), "
+                                 "max relative deviation {:.3e} (tolerance 1e-3)\n",
                                  checked, bc.live_sources(), max_rel);
         std::cout << (ok ? "SUCCESS: GPU and CPU dependency values match within tolerance.\n"
                          : "FAILURE: GPU and CPU dependency values differ beyond tolerance.\n");
