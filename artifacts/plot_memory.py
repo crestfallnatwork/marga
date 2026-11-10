@@ -75,6 +75,15 @@ def draw(rows, algorithm, out_path):
     width = 0.8 / len(SERIES)
     handles = []
 
+    reference = {}
+    for system, _, _ in SERIES:
+        if system != "marga":
+            continue
+        for graph, _ in DATASETS:
+            row = rows.get((system, graph))
+            if row is not None and row["status"] == "ok":
+                reference[graph] = int(row["delta_mib"]) / 1024.0
+
     for i, (system, label, colour) in enumerate(SERIES):
         xs = x - 0.4 + width * (i + 0.5)
         heights = []
@@ -86,18 +95,31 @@ def draw(rows, algorithm, out_path):
             xs, heights, width * 0.92, color=colour, label=label, zorder=3
         )
         handles.append(bars)
-        for xpos, height in zip(xs, heights):
-            if height > 0:
+        for xpos, height, (graph, _) in zip(xs, heights, DATASETS):
+            if height == 0:
+                ax.text(
+                    xpos,
+                    YMIN * 1.08,
+                    "OOM",
+                    rotation=90,
+                    ha="center",
+                    va="bottom",
+                    fontsize=18,
+                    color=colour,
+                )
+                continue
+            base = reference.get(graph, 0.0)
+            if system == "marga" or base <= 0:
                 continue
             ax.text(
                 xpos,
-                YMIN * 1.08,
-                "OOM",
+                height * 1.12,
+                f"{height / base:.1f}X",
                 rotation=90,
                 ha="center",
                 va="bottom",
                 fontsize=18,
-                color=colour,
+                color="black",
             )
 
     ax.set_xticks(x)
