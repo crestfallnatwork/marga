@@ -300,6 +300,87 @@ def combined(rows, out_path):
     plt.close(fig)
 
 
+def combined_ab(rows, out_path):
+    """Two-panel variant: culling and workload redistribution only."""
+    by_graph = {row["graph"]: row for row in rows}
+    graphs = [graph for graph in PHASE_ORDER if graph in by_graph]
+    panels = [
+        (
+            "(a) Culling",
+            [
+                ("marga_none", "MARGA, no cull", COLOURS["no_cull"]),
+                ("marga", "MARGA", COLOURS["marga"]),
+            ],
+        ),
+        (
+            "(b) Workload Redistribution",
+            [
+                ("static_none", "compute", COLOURS["compute"]),
+                ("marga_none", "MARGA, no cull", COLOURS["no_cull"]),
+            ],
+        ),
+    ]
+
+    plt.rcParams.update(COMBINED_STYLE)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 7.0), sharey=True)
+    x = np.arange(len(graphs))
+    width = 0.38
+    handles = {}
+
+    for ax, (title, series) in zip(axes, panels):
+        ax.set_yscale("log")
+        ax.set_ylim(1, 1e7)
+        ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0,), numticks=100))
+        ax.yaxis.set_minor_locator(
+            LogLocator(base=10.0, subs=tuple(range(2, 10)), numticks=100)
+        )
+        ax.grid(axis="y", which="major", color="0.85", linewidth=0.7, zorder=0)
+        ax.grid(axis="y", which="minor", color="0.93", linewidth=0.5, zorder=0)
+        ax.set_axisbelow(True)
+
+        values = [[float(by_graph[graph][key]) for graph in graphs] for key, _, _ in series]
+        for i, (key, label, colour) in enumerate(series):
+            xs = x - width / 2 + i * width
+            bars = ax.bar(xs, values[i], width, color=colour, zorder=3)
+            handles.setdefault(label, bars[0])
+
+        for i in range(len(graphs)):
+            top, base = values[0][i], values[1][i]
+            ax.text(
+                x[i] - width / 2,
+                top * 1.12,
+                f"{top / base:.1f}X",
+                rotation=90,
+                ha="center",
+                va="bottom",
+                fontsize=13,
+            )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([COMBINED_LABELS.get(graph, graph) for graph in graphs])
+        ax.set_title(title, fontweight="bold", pad=10)
+
+    axes[0].set_ylabel("Time (ms, log scale)")
+    fig.supxlabel("Dataset", y=0.02)
+
+    order = ["compute", "MARGA, no cull", "MARGA"]
+    fig.legend(
+        [handles[label] for label in order],
+        order,
+        loc="upper center",
+        ncol=3,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.985),
+        handlelength=0.9,
+        handletextpad=0.4,
+        columnspacing=0.8,
+    )
+    fig.tight_layout(rect=[0, 0.04, 1, 0.90])
+    fig.subplots_adjust(wspace=0.08)
+    fig.savefig(out_path, dpi=300)
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_dir", help="directory with the ablation CSVs")
@@ -357,6 +438,10 @@ def main():
     combined(
         rows,
         os.path.join(args.out_dir, "4090_tc_ablation_combined.png"),
+    )
+    combined_ab(
+        rows,
+        os.path.join(args.out_dir, "4090_tc_ablation_combined_ab.png"),
     )
 
 
