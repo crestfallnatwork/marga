@@ -38,6 +38,15 @@ cmake_install.cmake
 *.sysinfo.txt
 results/
 
+# Published benchmark data stays trackable despite the global *.csv ignore
+!artifacts/csvs/**
+!artifacts/csvs/*.csv
+
+# Local tooling state
+.opencode/
+__pycache__/
+*.pyc
+
 # clangd cache
 .cache
 temp

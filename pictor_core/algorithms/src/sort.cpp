@@ -32,7 +32,7 @@ constexpr uint64_t bin_shared_bytes(uint32_t wave_size, uint32_t waves, uint32_t
     return bytes;
 }
 
-// Shapes measured on the benchmark harness (see scratch/onesweep-perf.md). A device that is not
+// Shapes measured on the benchmark harness. A device that is not
 // listed keeps the shape the shader declares. The entries are the u32-key baseline: a wider key
 // takes proportionally fewer items per thread (see scaled_shape).
 struct MeasuredShape {

@@ -1,5 +1,5 @@
 graph,algo,k,sources,runs,per_run_ms,avg_ms,min_ms,max_ms,spread_pct,checksum,import_ms,wall_s,status,note
-GAP-road,cc,0,0,3,,13.143,,,,,,,ok,matrix run; per-run in /root/results/cc-GAP-road.log
+GAP-road,cc,0,0,3,,13.143,,,,,,,ok,
 GAP-road,bfs,0,64,64,,921.063,,,,,,,ok,mean over 64 sources; per-source in log
 GAP-road,tc,0,0,3,,40.6482,,,,,,,ok,matrix run
 GAP-road,bc,16,16,3,,1808.232,,,,,-nan,,ok,sum over 16 strided sources

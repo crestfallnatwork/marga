@@ -2,8 +2,9 @@
 """Plot the TC ablation figures from the CSV artifacts.
 
 Usage:
-    python artifacts/plot_tc_ablation.py CSV_DIR OUT_DIR
+    python3 benchmarks/plot_tc_ablation.py [CSV_DIR] [OUT_DIR]
 
+CSV_DIR defaults to ``config.OUT_DIR`` and OUT_DIR to ``artifacts/figs/``.
 CSV_DIR contains ``4090-tc-ablation.csv`` and
 ``4090-tc-ablation-phases.csv``. GAP-road is excluded from the figures.
 """
@@ -19,6 +20,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import LogLocator
+
+try:
+    from . import config
+except ImportError:  # run as a script
+    import config
+
+FIGS_DIR = os.path.join(config.ROOT, "artifacts", "figs")
 
 EXCLUDED = {"GAP-road"}
 DATASET_LABELS = {
@@ -383,8 +391,18 @@ def combined_ab(rows, out_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv_dir", help="directory with the ablation CSVs")
-    parser.add_argument("out_dir", help="output directory for the figures")
+    parser.add_argument(
+        "csv_dir",
+        nargs="?",
+        default=config.OUT_DIR,
+        help="directory with the ablation CSVs (default: config.OUT_DIR)",
+    )
+    parser.add_argument(
+        "out_dir",
+        nargs="?",
+        default=FIGS_DIR,
+        help="output directory for the figures (default: artifacts/figs/)",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)

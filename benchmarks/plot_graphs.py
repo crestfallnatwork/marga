@@ -2,16 +2,17 @@
 """Plot one benchmark result chart from the per-series CSV artifacts.
 
 Usage:
-    python artifacts/plot_graphs.py CSV_DIR PLATFORM ALGORITHM OUT.png
-    python artifacts/plot_graphs.py CSV_DIR PLATFORM DATASET OUT.png --by-algorithm
+    python3 benchmarks/plot_graphs.py [CSV_DIR] PLATFORM ALGORITHM [OUT.png]
+    python3 benchmarks/plot_graphs.py [CSV_DIR] PLATFORM DATASET [OUT.png] --by-algorithm
 
 CSV_DIR contains one file per series, named
 ``<platform>-<system>-<algorithm>.csv`` with ``graph,value`` rows and no
-header. Datasets and systems are selected and ordered below. A system without
-a file for this algorithm is skipped, as is a dataset without a row. Any
-non-numeric value is drawn as an OOM marker; the CSV retains the detailed
-status token. With ``--by-algorithm``, the third argument is a dataset and the
-x-axis is the algorithm list.
+header. It defaults to ``config.OUT_DIR``. Datasets and systems are selected
+and ordered below. A system without a file for this algorithm is skipped, as
+is a dataset without a row. Any non-numeric value is drawn as an OOM marker;
+the CSV retains the detailed status token. With ``--by-algorithm``, the third
+argument is a dataset and the x-axis is the algorithm list. OUT defaults to
+``artifacts/figs/<platform>_<algorithm>.png``.
 """
 
 import argparse
@@ -24,6 +25,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import LogLocator
+
+try:
+    from . import config
+except ImportError:  # run as a script
+    import config
+
+FIGS_DIR = os.path.join(config.ROOT, "artifacts", "figs")
 
 # Datasets to show, in order: (CSV graph name, tick label).
 DATASETS = [
@@ -292,15 +300,32 @@ def plot_by_algorithm(csv_dir, platform, dataset, out_path, ylabel):
     plt.close(fig)
 
 
+def resolve_targets(values):
+    """Resolve the positionals, which may omit the leading CSV directory.
+
+    Three values are ``CSV_DIR PLATFORM ALGORITHM`` when the first one is a
+    directory, and ``PLATFORM ALGORITHM OUT`` otherwise.
+    """
+    if len(values) == 4:
+        return values
+    if len(values) == 3:
+        if os.path.isdir(values[0]):
+            return values + [None]
+        return [config.OUT_DIR] + values
+    if len(values) == 2:
+        return [config.OUT_DIR] + values + [None]
+    raise SystemExit("expected [CSV_DIR] PLATFORM ALGORITHM [OUT.png]")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv_dir", help="directory with the series CSVs")
-    parser.add_argument("platform", help="CSV platform prefix, e.g. 4090")
     parser.add_argument(
-        "algorithm",
-        help="CSV algorithm suffix, or dataset with --by-algorithm",
+        "targets",
+        nargs="+",
+        metavar="[CSV_DIR] PLATFORM ALGORITHM [OUT.png]",
+        help="CSV directory (default: config.OUT_DIR), platform prefix, "
+        "algorithm (or dataset), output image (default: artifacts/figs/)",
     )
-    parser.add_argument("out", help="output image path")
     parser.add_argument("--ylabel", default=None, help="y-axis label")
     parser.add_argument(
         "--by-algorithm",
@@ -309,17 +334,16 @@ def main():
     )
     args = parser.parse_args()
 
-    out_dir = os.path.dirname(args.out)
+    csv_dir, platform, algorithm, out = resolve_targets(args.targets)
+    out = out or os.path.join(FIGS_DIR, f"{platform}_{algorithm}.png")
+    out_dir = os.path.dirname(out)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
+    ylabel = args.ylabel or DEFAULT_YLABEL
     if args.by_algorithm:
-        ylabel = args.ylabel or DEFAULT_YLABEL
-        plot_by_algorithm(
-            args.csv_dir, args.platform, args.algorithm, args.out, ylabel
-        )
+        plot_by_algorithm(csv_dir, platform, algorithm, out, ylabel)
     else:
-        ylabel = args.ylabel or DEFAULT_YLABEL
-        plot(args.csv_dir, args.platform, args.algorithm, args.out, ylabel)
+        plot(csv_dir, platform, algorithm, out, ylabel)
 
 
 if __name__ == "__main__":

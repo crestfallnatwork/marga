@@ -2,9 +2,10 @@
 """Plot peak device memory for one algorithm from the 4090 memory CSV.
 
 Usage:
-    python artifacts/plot_memory.py CSV_DIR OUT_DIR [--algorithm tc]
+    python3 benchmarks/plot_memory.py [CSV_DIR] [OUT_DIR] [--algorithm tc]
 
-The CSV is ``4090-memory.csv``; ``delta_mib`` is peak minus idle.  The style
+The CSV is ``4090-memory.csv``; ``delta_mib`` is peak minus idle.  CSV_DIR
+defaults to ``config.OUT_DIR`` and OUT_DIR to ``artifacts/figs/``.  The style
 matches the benchmark charts in ``plot_graphs.py``: 15x7 in, 24 pt text, log
 y-axis and the legend above the axes.  OOM cells are drawn as a small marker
 and a rotated label in the series colour.
@@ -20,6 +21,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import LogLocator
+
+try:
+    from . import config
+except ImportError:  # run as a script
+    import config
+
+FIGS_DIR = os.path.join(config.ROOT, "artifacts", "figs")
 
 SERIES = [
     ("cugraph", "cuGraph", "#1f77b4"),
@@ -144,8 +152,18 @@ def draw(rows, algorithm, out_path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv_dir")
-    parser.add_argument("out_dir")
+    parser.add_argument(
+        "csv_dir",
+        nargs="?",
+        default=config.OUT_DIR,
+        help="directory with 4090-memory.csv (default: config.OUT_DIR)",
+    )
+    parser.add_argument(
+        "out_dir",
+        nargs="?",
+        default=FIGS_DIR,
+        help="output directory for the figures (default: artifacts/figs/)",
+    )
     parser.add_argument("--algorithm", default="tc")
     args = parser.parse_args()
 

@@ -20,7 +20,7 @@ when `CUDAToolkit` is found (CUB ships with the toolkit, or comes from the `gpuj
 - Time GPU work with GPU timestamps (Vulkan) / CUDA events (CUDA); never host clocks around async
   work.
 - Warm up before timing; report the median.
-- Pin clocks on the benchmark server and keep the GPU otherwise idle (see the `scratch/` notes);
+- Pin clocks on the benchmark host and keep the GPU otherwise idle;
   record the commit hash and GPU state alongside any numbers.
 - Use the same synthetic generator (`bench/primitives/synthetic.hpp`) and seed for every variant.
 
